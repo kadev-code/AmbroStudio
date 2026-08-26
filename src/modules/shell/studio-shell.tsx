@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ClientsPanel } from '@/src/modules/clients/clients-panel';
 import { DiagnosticsPanel } from '@/src/modules/diagnostics/diagnostics-panel';
 import { PricingSimulator } from '@/src/modules/pricing/pricing-simulator';
@@ -47,14 +47,20 @@ const headings: Record<
 
 export function StudioShell() {
   const [activeModule, setActiveModule] = useState<ModuleId>('production');
+  const contentScrollRef = useRef<HTMLDivElement>(null);
   const heading = headings[activeModule];
   const desktopAvailable =
     typeof window !== 'undefined' && Boolean(window.ambroDesktop);
 
+  useEffect(() => {
+    contentScrollRef.current?.scrollTo({ top: 0 });
+    window.scrollTo({ top: 0 });
+  }, [activeModule]);
+
   return (
-    <main className="min-h-screen bg-[#f6f1e9] text-[#34251f]">
-      <div className="grid min-h-screen lg:grid-cols-[248px_minmax(0,1fr)]">
-        <aside className="border-b border-[#dfd4c7] bg-[#4b3027] px-5 py-5 text-white lg:border-b-0 lg:border-r">
+    <main className="min-h-screen bg-[#f6f1e9] text-[#34251f] lg:h-dvh lg:overflow-hidden">
+      <div className="grid min-h-screen lg:h-dvh lg:min-h-0 lg:grid-cols-[248px_minmax(0,1fr)]">
+        <aside className="border-b border-[#dfd4c7] bg-[#4b3027] px-5 py-5 text-white lg:h-dvh lg:overflow-y-auto lg:border-b-0 lg:border-r">
           <div className="flex items-center justify-between lg:block">
             <div className="flex items-center gap-3">
               <div className="grid h-11 w-11 place-items-center rounded-2xl bg-[#c69a45] text-lg font-black text-[#3d291f] shadow-sm">A</div>
@@ -95,8 +101,8 @@ export function StudioShell() {
           </div>
         </aside>
 
-        <section className="min-w-0">
-          <header className="flex flex-col gap-4 border-b border-[#dfd4c7] bg-white/75 px-5 py-5 backdrop-blur sm:flex-row sm:items-center sm:justify-between lg:px-8">
+        <section className="min-w-0 lg:flex lg:h-dvh lg:min-h-0 lg:flex-col">
+          <header className="flex shrink-0 flex-col gap-4 border-b border-[#dfd4c7] bg-white/75 px-5 py-5 backdrop-blur sm:flex-row sm:items-center sm:justify-between lg:px-8">
             <div>
               <p className="text-xs font-bold uppercase tracking-[0.18em] text-[#9a6f57]">{heading.eyebrow}</p>
               <h1 className="mt-1 text-2xl font-bold tracking-tight sm:text-3xl">{heading.title}</h1>
@@ -107,7 +113,10 @@ export function StudioShell() {
             </div>
           </header>
 
-          <div className="p-5 lg:p-8">
+          <div
+            className="p-5 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:p-8"
+            ref={contentScrollRef}
+          >
             {activeModule === 'production' ? <ProductionBoard /> : null}
             {activeModule === 'pricing' ? <PricingSimulator /> : null}
             {activeModule === 'clients' ? <ClientsPanel /> : null}
