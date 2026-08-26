@@ -1,6 +1,6 @@
 {
   "name": "ambro-studio-app",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Gestão local de produção, precificação e clientes da Ambro Personalizados.",
   "author": "Ambro Personalizados",
   "private": true,
@@ -39,7 +39,7 @@
         "provider": "github",
         "owner": "kadev-code",
         "repo": "AmbroStudio",
-        "releaseType": "draft"
+        "releaseType": "release"
       }
     ],
     "files": [
