@@ -1,0 +1,67 @@
+import { z } from 'zod';
+
+export const PRICING_DRAFT_STORAGE_KEY = 'ambro-studio:pricing-draft:v1';
+
+export const pricingFormSchema = z
+  .object({
+    materials: z.number().finite().nonnegative(),
+    laborHour: z.number().finite().nonnegative(),
+    fixedHour: z.number().finite().nonnegative(),
+    minutes: z.number().finite().nonnegative(),
+    packaging: z.number().finite().nonnegative(),
+    wastePercent: z.number().finite().nonnegative(),
+    marginPercent: z.number().finite().nonnegative(),
+    taxPercent: z.number().finite().nonnegative(),
+    channelPercent: z.number().finite().nonnegative(),
+  })
+  .strict();
+
+export type PricingFormState = z.infer<typeof pricingFormSchema>;
+
+export const DEFAULT_PRICING_FORM: PricingFormState = {
+  materials: 8,
+  laborHour: 24,
+  fixedHour: 12,
+  minutes: 30,
+  packaging: 1,
+  wastePercent: 5,
+  marginPercent: 40,
+  taxPercent: 6,
+  channelPercent: 5,
+};
+
+export function parsePricingDraft(serializedDraft: string | null) {
+  if (!serializedDraft) return { ...DEFAULT_PRICING_FORM };
+
+  try {
+    const parsed = pricingFormSchema.safeParse(JSON.parse(serializedDraft));
+    return parsed.success ? parsed.data : { ...DEFAULT_PRICING_FORM };
+  } catch {
+    return { ...DEFAULT_PRICING_FORM };
+  }
+}
+
+export function loadPricingDraft() {
+  if (typeof window === 'undefined') return { ...DEFAULT_PRICING_FORM };
+
+  try {
+    return parsePricingDraft(
+      window.localStorage.getItem(PRICING_DRAFT_STORAGE_KEY),
+    );
+  } catch {
+    return { ...DEFAULT_PRICING_FORM };
+  }
+}
+
+export function persistPricingDraft(form: PricingFormState) {
+  if (typeof window === 'undefined') return;
+
+  try {
+    window.localStorage.setItem(
+      PRICING_DRAFT_STORAGE_KEY,
+      JSON.stringify(form),
+    );
+  } catch {
+    // O cálculo continua funcionando mesmo se o navegador bloquear o storage.
+  }
+}

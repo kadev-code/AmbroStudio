@@ -1,0 +1,10 @@
+packages:
+  - .
+
+storeDir: .pnpm-store/v11
+
+allowBuilds:
+  '@firebase/util': true
+  electron-winstaller: false
+  esbuild: true
+  protobufjs: true
