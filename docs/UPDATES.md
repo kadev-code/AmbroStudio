@@ -41,8 +41,9 @@ As atualizações estão conectadas a
    `pnpm desktop:compile`.
 3. Faça commit das alterações.
 4. Crie uma tag igual à versão, por exemplo `v0.3.0`, e envie a tag ao GitHub.
-5. O workflow `.github/workflows/release.yml` valida o projeto e publica a
-   release estável com o instalador, o blockmap e o `latest.yml`.
+5. O workflow `.github/workflows/release.yml` valida o projeto, gera todos os
+   artefatos, envia instalador, blockmap e `latest.yml` a uma release em
+   rascunho e somente depois publica a release estável.
 6. Confirme no GitHub que o workflow e a release foram concluídos. Releases em
    rascunho não são oferecidas aos aplicativos instalados.
 

@@ -43,7 +43,27 @@ jobs:
       - name: Validar estilo
         run: pnpm lint
 
-      - name: Publicar instalador e atualização
-        run: pnpm desktop:publish
+      - name: Gerar instalador e atualização
+        run: pnpm desktop:build
+
+      - name: Publicar release completa
+        shell: pwsh
+        run: |
+          $packageVersion = node -p "require('./package.json').version"
+          $tag = $env:GITHUB_REF_NAME
+          $installer = "release/Ambro-Studio-Setup-$packageVersion.exe"
+          $blockmap = "$installer.blockmap"
+          $metadata = "release/latest.yml"
+
+          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --repo $env:GITHUB_REPOSITORY --draft --verify-tag --title "Ambro Studio $packageVersion" --generate-notes
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+          gh release upload $tag $installer $blockmap $metadata --repo $env:GITHUB_REPOSITORY --clobber
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          gh release edit $tag --repo $env:GITHUB_REPOSITORY --draft=false --latest
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
