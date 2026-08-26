@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import { createPricingMaterial } from '../../domain/pricing/material';
 import { DEFAULT_PRICING_FORM } from './pricing-form-state';
 import {
   parsePricingProductDrafts,
+  pricingProductMaterialsCostCents,
+  refreshPricingProductMaterialCosts,
   savePricingProductDraft,
   suggestedPriceForProductDraft,
 } from './pricing-product-drafts';
@@ -30,11 +33,56 @@ describe('pricing product drafts', () => {
     expect(parsePricingProductDrafts('json inválido')).toEqual([]);
   });
 
+  it('migra o custo manual de produtos antigos sem alterar o preço', () => {
+    const legacy = JSON.stringify([
+      {
+        id: 'ef790ce3-90b6-4e0f-b349-baa6f15025b7',
+        name: 'Kit festa antigo',
+        form: { ...DEFAULT_PRICING_FORM, materials: 18.5 },
+        updatedAt: '2026-08-25T10:00:00.000Z',
+      },
+    ]);
+
+    const [draft] = parsePricingProductDrafts(legacy);
+    expect(draft.materialUsages).toEqual([]);
+    expect(draft.legacyMaterialsCostCents).toBe(1_850);
+  });
+
+  it('mantém uma receita diferente por produto e atualiza seu custo', () => {
+    const [material] = createPricingMaterial(
+      [],
+      {
+        description: 'Cola branca',
+        purchasePriceCents: 1_000,
+        purchasedQuantity: 200,
+        measurementUnit: 'ml',
+        purchaseUrl: '',
+        notes: '',
+      },
+      { id: '03c9eaa2-56db-4415-8c12-8e40d38f791c' },
+    );
+    const drafts = savePricingProductDraft([], {
+      id: 'ef790ce3-90b6-4e0f-b349-baa6f15025b7',
+      name: 'Kit festa',
+      form: { ...DEFAULT_PRICING_FORM, materials: 0 },
+      materialUsages: [{ materialId: material.id, usedQuantity: 15 }],
+      legacyMaterialsCostCents: null,
+      updatedAt: '2026-08-25T10:00:00.000Z',
+    });
+    const refreshed = refreshPricingProductMaterialCosts(drafts, [material]);
+
+    expect(pricingProductMaterialsCostCents(refreshed[0], [material])).toBe(75);
+    expect(refreshed[0].form.materials).toBe(0.75);
+    expect(refreshed[0].materialUsages).toEqual([
+      { materialId: material.id, usedQuantity: 15 },
+    ]);
+  });
+
   it('calcula o preço sugerido salvo no produto', () => {
     const drafts = savePricingProductDraft([], {
       id: 'ef790ce3-90b6-4e0f-b349-baa6f15025b7',
       name: 'Kit festa',
-      form: DEFAULT_PRICING_FORM,
+      form: { ...DEFAULT_PRICING_FORM, materials: 8 },
       updatedAt: '2026-08-25T10:00:00.000Z',
     });
 

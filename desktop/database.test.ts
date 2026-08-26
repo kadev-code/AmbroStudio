@@ -37,17 +37,21 @@ describe('desktop database', () => {
   it('cria e restaura um backup validado', () => {
     const { database, directory } = createTestDatabase();
     const key = 'ambro-studio:pricing-product-drafts:v1';
+    const materialsKey = 'ambro-studio:pricing-materials:v1';
     const backupPath = join(directory, 'backup.ambrobackup');
     const attachmentPath = join(directory, 'proposta.txt');
     database.writeDocument(key, '[{"name":"Produto inicial"}]');
+    database.writeDocument(materialsKey, '[{"description":"Papel"}]');
     writeFileSync(attachmentPath, 'conteúdo fictício', 'utf8');
     const [attachment] = database.addAttachments([attachmentPath]);
     database.createBackup(backupPath);
     database.writeDocument(key, '[]');
+    database.writeDocument(materialsKey, '[]');
     database.removeAttachment(attachment.id);
     database.restoreBackup(backupPath);
 
     expect(database.readDocument(key)).toContain('Produto inicial');
+    expect(database.readDocument(materialsKey)).toContain('Papel');
     expect(database.readAttachment(attachment.id).content.toString('utf8')).toBe(
       'conteúdo fictício',
     );

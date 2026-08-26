@@ -19,7 +19,7 @@ export const pricingFormSchema = z
 export type PricingFormState = z.infer<typeof pricingFormSchema>;
 
 export const DEFAULT_PRICING_FORM: PricingFormState = {
-  materials: 8,
+  materials: 0,
   laborHour: 24,
   fixedHour: 12,
   minutes: 30,

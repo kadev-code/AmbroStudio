@@ -1,6 +1,12 @@
 import { z } from 'zod';
 import { calculatePrice } from '../../domain/pricing/calculate-price';
 import {
+  materialUsagesCostCents,
+  materialUsagesSchema,
+  type MaterialUsage,
+  type PricingMaterial,
+} from '../../domain/pricing/material';
+import {
   readStoredDocument,
   writeStoredDocument,
 } from '../../infrastructure/persistence/document-storage';
@@ -9,11 +15,19 @@ import { pricingFormSchema, type PricingFormState } from './pricing-form-state';
 export const PRICING_PRODUCTS_STORAGE_KEY =
   'ambro-studio:pricing-product-drafts:v1';
 
-const pricingProductDraftSchema = z
+export const pricingProductDraftSchema = z
   .object({
     id: z.string().uuid(),
     name: z.string().trim().min(1).max(80),
     form: pricingFormSchema,
+    materialUsages: materialUsagesSchema.default([]),
+    legacyMaterialsCostCents: z
+      .number()
+      .int()
+      .nonnegative()
+      .max(999_999_999)
+      .nullable()
+      .default(null),
     updatedAt: z.string().datetime(),
   })
   .strict();
@@ -26,9 +40,28 @@ export function parsePricingProductDrafts(serializedDrafts: string | null) {
   if (!serializedDrafts) return [];
 
   try {
-    const parsed = pricingProductDraftsSchema.safeParse(
-      JSON.parse(serializedDrafts),
-    );
+    const raw = JSON.parse(serializedDrafts) as unknown;
+    const migrated = Array.isArray(raw)
+      ? raw.map((value) => {
+          if (!value || typeof value !== 'object' || Array.isArray(value)) {
+            return value;
+          }
+          const draft = value as Record<string, unknown>;
+          const form = draft.form as Record<string, unknown> | undefined;
+          const isLegacy = !Object.hasOwn(draft, 'materialUsages');
+          return {
+            ...draft,
+            materialUsages: isLegacy ? [] : draft.materialUsages,
+            legacyMaterialsCostCents: isLegacy
+              ? Math.max(
+                  0,
+                  Math.round(Number(form?.materials ?? 0) * 100),
+                ) || null
+              : (draft.legacyMaterialsCostCents ?? null),
+          };
+        })
+      : raw;
+    const parsed = pricingProductDraftsSchema.safeParse(migrated);
     return parsed.success ? parsed.data : [];
   } catch {
     return [];
@@ -47,8 +80,10 @@ export function persistPricingProductDrafts(drafts: PricingProductDraft[]) {
       PRICING_PRODUCTS_STORAGE_KEY,
       JSON.stringify(drafts),
     );
+    return true;
   } catch {
     // Rascunhos são opcionais e nunca devem impedir a simulação de preço.
+    return false;
   }
 }
 
@@ -58,6 +93,8 @@ export function savePricingProductDraft(
     id?: string;
     name: string;
     form: PricingFormState;
+    materialUsages?: MaterialUsage[];
+    legacyMaterialsCostCents?: number | null;
     updatedAt?: string;
   },
 ) {
@@ -65,6 +102,8 @@ export function savePricingProductDraft(
     id: input.id ?? crypto.randomUUID(),
     name: input.name,
     form: input.form,
+    materialUsages: input.materialUsages ?? [],
+    legacyMaterialsCostCents: input.legacyMaterialsCostCents ?? null,
     updatedAt: input.updatedAt ?? new Date().toISOString(),
   });
   const remainingDrafts = drafts.filter((item) => item.id !== draft.id);
@@ -72,6 +111,40 @@ export function savePricingProductDraft(
   return [draft, ...remainingDrafts].sort((first, second) =>
     second.updatedAt.localeCompare(first.updatedAt),
   );
+}
+
+export function pricingProductMaterialsCostCents(
+  draft: Pick<
+    PricingProductDraft,
+    'form' | 'materialUsages' | 'legacyMaterialsCostCents'
+  >,
+  materials: PricingMaterial[],
+) {
+  if (draft.legacyMaterialsCostCents !== null) {
+    return draft.legacyMaterialsCostCents;
+  }
+  return materialUsagesCostCents(draft.materialUsages, materials);
+}
+
+export function refreshPricingProductMaterialCosts(
+  drafts: PricingProductDraft[],
+  materials: PricingMaterial[],
+) {
+  return drafts.map((draft) => {
+    if (draft.legacyMaterialsCostCents !== null) return draft;
+    try {
+      const materialsCostCents = pricingProductMaterialsCostCents(
+        draft,
+        materials,
+      );
+      return pricingProductDraftSchema.parse({
+        ...draft,
+        form: { ...draft.form, materials: materialsCostCents / 100 },
+      });
+    } catch {
+      return draft;
+    }
+  });
 }
 
 export function suggestedPriceForProductDraft(

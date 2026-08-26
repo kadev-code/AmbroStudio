@@ -1,6 +1,6 @@
 {
   "name": "ambro-studio-app",
-  "version": "0.3.3",
+  "version": "0.4.0",
   "description": "Gestão local de produção, precificação e clientes da Ambro Personalizados.",
   "author": "Ambro Personalizados",
   "private": true,

@@ -7,6 +7,7 @@ const allowedDocumentKeys = new Set([
   'ambro-studio:client-drafts:v1',
   'ambro-studio:production-drafts:v1',
   'ambro-studio:pricing-product-drafts:v1',
+  'ambro-studio:pricing-materials:v1',
 ]);
 
 const maximumDocumentBytes = 10 * 1024 * 1024;

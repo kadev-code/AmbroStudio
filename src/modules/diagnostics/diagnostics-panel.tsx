@@ -5,6 +5,7 @@ import { CLIENT_DRAFTS_STORAGE_KEY } from '@/src/infrastructure/clients/local-cl
 import type { DesktopUpdateState } from '@/src/infrastructure/desktop/desktop-api';
 import { safeLogger } from '@/src/infrastructure/logging/safe-logger';
 import { PRODUCTION_DRAFTS_STORAGE_KEY } from '@/src/infrastructure/production/local-production-draft-repository';
+import { PRICING_MATERIALS_STORAGE_KEY } from '@/src/infrastructure/pricing/local-material-catalog-repository';
 import { PRICING_PRODUCTS_STORAGE_KEY } from '@/src/modules/pricing/pricing-product-drafts';
 
 function updateStatusMessage(state: DesktopUpdateState) {
@@ -163,6 +164,7 @@ export function DiagnosticsPanel() {
           CLIENT_DRAFTS_STORAGE_KEY,
           PRODUCTION_DRAFTS_STORAGE_KEY,
           PRICING_PRODUCTS_STORAGE_KEY,
+          PRICING_MATERIALS_STORAGE_KEY,
         ].flatMap((key) => {
           const value = window.localStorage.getItem(key);
           return value ? [[key, JSON.parse(value)]] : [];
