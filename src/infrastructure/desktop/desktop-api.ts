@@ -62,6 +62,10 @@ export type AmbroDesktopApi = {
     writeMany(
       documents: Array<{ key: string; serializedValue: string }>,
     ): void;
+    deleteClientData(
+      documents: Array<{ key: string; serializedValue: string }>,
+      attachmentIds: string[],
+    ): void;
   };
   backup: {
     create(): Promise<DesktopActionResult>;

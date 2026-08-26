@@ -109,6 +109,15 @@ function registerIpc() {
       return null;
     });
   });
+  ipcMain.on(
+    'clients:delete-data',
+    (event, documents: unknown, attachmentIds: unknown) => {
+      event.returnValue = actionResult(() => {
+        database.deleteClientData(documents, attachmentIds);
+        return null;
+      });
+    },
+  );
   ipcMain.on('diagnostics:record', (_event, diagnosticEvent: unknown) => {
     try {
       database.recordDiagnostic(diagnosticEvent);

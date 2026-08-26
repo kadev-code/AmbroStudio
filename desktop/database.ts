@@ -82,6 +82,34 @@ function validateSerializedDocument(value: unknown) {
   return value;
 }
 
+function validateDocumentBatch(documents: unknown) {
+  if (!Array.isArray(documents) || documents.length < 1 || documents.length > 20) {
+    throw new Error('INVALID_DOCUMENT_BATCH');
+  }
+
+  const validatedDocuments = documents.map((document) => {
+    if (!document || typeof document !== 'object' || Array.isArray(document)) {
+      throw new Error('INVALID_DOCUMENT_BATCH');
+    }
+    const candidate = document as {
+      key?: unknown;
+      serializedValue?: unknown;
+    };
+    assertDocumentKey(candidate.key);
+    return {
+      key: candidate.key,
+      serializedValue: validateSerializedDocument(candidate.serializedValue),
+    };
+  });
+  if (
+    new Set(validatedDocuments.map((document) => document.key)).size !==
+    validatedDocuments.length
+  ) {
+    throw new Error('DUPLICATED_DOCUMENT_KEY');
+  }
+  return validatedDocuments;
+}
+
 function assertAttachmentId(value: unknown): asserts value is string {
   if (
     typeof value !== 'string' ||
@@ -228,30 +256,7 @@ export class DesktopDatabase {
   }
 
   writeDocuments(documents: unknown) {
-    if (!Array.isArray(documents) || documents.length < 1 || documents.length > 20) {
-      throw new Error('INVALID_DOCUMENT_BATCH');
-    }
-
-    const validatedDocuments = documents.map((document) => {
-      if (!document || typeof document !== 'object' || Array.isArray(document)) {
-        throw new Error('INVALID_DOCUMENT_BATCH');
-      }
-      const candidate = document as {
-        key?: unknown;
-        serializedValue?: unknown;
-      };
-      assertDocumentKey(candidate.key);
-      return {
-        key: candidate.key,
-        serializedValue: validateSerializedDocument(candidate.serializedValue),
-      };
-    });
-    if (
-      new Set(validatedDocuments.map((document) => document.key)).size !==
-      validatedDocuments.length
-    ) {
-      throw new Error('DUPLICATED_DOCUMENT_KEY');
-    }
+    const validatedDocuments = validateDocumentBatch(documents);
 
     const statement = this.database.prepare(`
       INSERT INTO app_documents (document_key, document_value, updated_at)
@@ -265,6 +270,50 @@ export class DesktopDatabase {
       const timestamp = new Date().toISOString();
       for (const document of validatedDocuments) {
         statement.run(document.key, document.serializedValue, timestamp);
+      }
+      this.database.exec('COMMIT');
+    } catch (error) {
+      this.database.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  deleteClientData(documents: unknown, attachmentIds: unknown) {
+    const validatedDocuments = validateDocumentBatch(documents);
+    const expectedKeys = new Set([
+      'ambro-studio:client-drafts:v1',
+      'ambro-studio:production-drafts:v1',
+    ]);
+    if (
+      validatedDocuments.length !== expectedKeys.size ||
+      validatedDocuments.some((document) => !expectedKeys.has(document.key))
+    ) {
+      throw new Error('INVALID_CLIENT_DELETION_DOCUMENTS');
+    }
+    if (!Array.isArray(attachmentIds) || attachmentIds.length > 10_000) {
+      throw new Error('INVALID_ATTACHMENT_IDS');
+    }
+    for (const attachmentId of attachmentIds) assertAttachmentId(attachmentId);
+    const uniqueAttachmentIds = [...new Set(attachmentIds as string[])];
+
+    const documentStatement = this.database.prepare(`
+      INSERT INTO app_documents (document_key, document_value, updated_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(document_key) DO UPDATE SET
+        document_value = excluded.document_value,
+        updated_at = excluded.updated_at
+    `);
+    const attachmentStatement = this.database.prepare(
+      'DELETE FROM negotiation_attachments WHERE attachment_id = ?',
+    );
+    this.database.exec('BEGIN IMMEDIATE');
+    try {
+      const timestamp = new Date().toISOString();
+      for (const document of validatedDocuments) {
+        documentStatement.run(document.key, document.serializedValue, timestamp);
+      }
+      for (const attachmentId of uniqueAttachmentIds) {
+        attachmentStatement.run(attachmentId);
       }
       this.database.exec('COMMIT');
     } catch (error) {

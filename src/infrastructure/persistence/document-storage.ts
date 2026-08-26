@@ -73,3 +73,16 @@ export function writeStoredDocuments(
     throw error;
   }
 }
+
+export function writeStoredDocumentsAndRemoveAttachments(
+  documents: Array<{ key: string; serializedValue: string }>,
+  attachmentIds: string[],
+) {
+  if (typeof window === 'undefined') return;
+  if (window.ambroDesktop) {
+    window.ambroDesktop.storage.deleteClientData(documents, attachmentIds);
+    return;
+  }
+
+  writeStoredDocuments(documents);
+}

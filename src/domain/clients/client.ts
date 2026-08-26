@@ -123,6 +123,26 @@ export function editClientDraft(
   );
 }
 
+export function deleteClientDrafts(
+  clients: ClientDraft[],
+  clientIds: ReadonlySet<string>,
+) {
+  return clients.filter((client) => !clientIds.has(client.id));
+}
+
+export function clientAttachmentIds(
+  clients: ClientDraft[],
+  clientIds: ReadonlySet<string>,
+) {
+  return clients
+    .filter((client) => clientIds.has(client.id))
+    .flatMap((client) =>
+      client.negotiations.flatMap((negotiation) =>
+        negotiation.attachments.map((attachment) => attachment.id),
+      ),
+    );
+}
+
 export function addClientNegotiation(
   clients: ClientDraft[],
   clientId: string,

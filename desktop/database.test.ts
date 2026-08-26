@@ -55,6 +55,57 @@ describe('desktop database', () => {
     database.close();
   });
 
+  it('exclui clientes, pedidos vinculados e anexos na mesma transação', () => {
+    const { database, directory } = createTestDatabase();
+    const clientsKey = 'ambro-studio:client-drafts:v1';
+    const productionKey = 'ambro-studio:production-drafts:v1';
+    const attachmentPath = join(directory, 'proposta.txt');
+    writeFileSync(attachmentPath, 'negociação fictícia', 'utf8');
+    const [attachment] = database.addAttachments([attachmentPath]);
+    database.writeDocuments([
+      { key: clientsKey, serializedValue: '[{"id":"cliente"}]' },
+      { key: productionKey, serializedValue: '[{"id":"pedido"}]' },
+    ]);
+
+    database.deleteClientData(
+      [
+        { key: clientsKey, serializedValue: '[]' },
+        { key: productionKey, serializedValue: '[]' },
+      ],
+      [attachment.id],
+    );
+
+    expect(database.readDocument(clientsKey)).toBe('[]');
+    expect(database.readDocument(productionKey)).toBe('[]');
+    expect(() => database.readAttachment(attachment.id)).toThrow(
+      'ATTACHMENT_NOT_FOUND',
+    );
+    database.close();
+  });
+
+  it('não altera os documentos se a exclusão de clientes for inválida', () => {
+    const { database } = createTestDatabase();
+    const clientsKey = 'ambro-studio:client-drafts:v1';
+    const productionKey = 'ambro-studio:production-drafts:v1';
+    database.writeDocuments([
+      { key: clientsKey, serializedValue: '[{"id":"cliente"}]' },
+      { key: productionKey, serializedValue: '[{"id":"pedido"}]' },
+    ]);
+
+    expect(() =>
+      database.deleteClientData(
+        [
+          { key: clientsKey, serializedValue: '[]' },
+          { key: productionKey, serializedValue: '[]' },
+        ],
+        ['identificador-inválido'],
+      ),
+    ).toThrow('INVALID_ATTACHMENT_ID');
+    expect(database.readDocument(clientsKey)).toContain('cliente');
+    expect(database.readDocument(productionKey)).toContain('pedido');
+    database.close();
+  });
+
   it('cria e restaura um backup validado', () => {
     const { database, directory } = createTestDatabase();
     const key = 'ambro-studio:pricing-product-drafts:v1';

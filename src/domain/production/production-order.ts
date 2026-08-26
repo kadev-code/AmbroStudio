@@ -159,6 +159,15 @@ export function pendingNegotiationIdsForProduction(
     .map((negotiation) => negotiation.id);
 }
 
+export function removeProductionOrdersForClients(
+  orders: ProductionOrder[],
+  clientIds: ReadonlySet<string>,
+) {
+  return orders.filter(
+    (order) => !order.clientId || !clientIds.has(order.clientId),
+  );
+}
+
 export function changeProductionPriority(
   orders: ProductionOrder[],
   orderId: string,

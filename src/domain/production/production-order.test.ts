@@ -4,6 +4,7 @@ import {
   changeProductionPriority,
   createProductionOrder,
   pendingNegotiationIdsForProduction,
+  removeProductionOrdersForClients,
   transitionProductionOrder,
   unarchiveProductionOrder,
 } from './production-order';
@@ -141,5 +142,31 @@ describe('production orders', () => {
         { id: negotiationId, status: 'Concluída' },
       ]),
     ).toEqual([]);
+  });
+
+  it('remove pedidos vinculados aos clientes excluídos e mantém os avulsos', () => {
+    const clientId = '3403507e-58f4-4ccd-9a3a-463ece19c018';
+    const linked = createProductionOrder(
+      createOrder(),
+      {
+        product: 'Pedido do cliente',
+        clientId,
+        dueDate: '2026-08-30',
+        priority: 'normal',
+        status: 'approved',
+      },
+      {
+        id: '6e9bb184-31a5-49fd-9519-028b46197f44',
+        timestamp: '2026-08-25T13:00:00.000Z',
+      },
+    );
+
+    const remaining = removeProductionOrdersForClients(
+      linked,
+      new Set([clientId]),
+    );
+
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0].clientId).toBeNull();
   });
 });

@@ -3,8 +3,10 @@ import {
   addClientNegotiationAttachments,
   addClientNegotiation,
   clientContactInputSchema,
+  clientAttachmentIds,
   clientMetrics,
   createClientDraft,
+  deleteClientDrafts,
   editClientDraft,
   editClientNegotiation,
   filterClientDrafts,
@@ -20,7 +22,10 @@ import {
   loadClientDrafts,
   persistClientDrafts,
 } from '@/src/infrastructure/clients/local-client-draft-repository';
+import { persistClientDeletion } from '@/src/infrastructure/clients/local-client-deletion-repository';
+import { safeLogger } from '@/src/infrastructure/logging/safe-logger';
 import { loadProductionDrafts } from '@/src/infrastructure/production/local-production-draft-repository';
+import { removeProductionOrdersForClients } from '@/src/domain/production/production-order';
 import {
   loadPricingProductDrafts,
   suggestedPriceForProductDraft,
@@ -88,7 +93,7 @@ export function ClientsPanel() {
     typeof window !== 'undefined' && Boolean(window.ambroDesktop);
   const [clients, setClients] = useState(loadClientDrafts);
   const [productDrafts] = useState(loadPricingProductDrafts);
-  const [productionOrders] = useState(loadProductionDrafts);
+  const [productionOrders, setProductionOrders] = useState(loadProductionDrafts);
   const [query, setQuery] = useState('');
   const [showClientForm, setShowClientForm] = useState(false);
   const [clientForm, setClientForm] = useState(emptyClientForm);
@@ -124,6 +129,78 @@ export function ClientsPanel() {
   function saveClients(nextClients: typeof clients) {
     setClients(nextClients);
     persistClientDrafts(nextClients);
+  }
+
+  function deleteClients(clientIds: string[]) {
+    const ids = new Set(clientIds);
+    const clientsToDelete = clients.filter((client) => ids.has(client.id));
+    if (!clientsToDelete.length) return;
+
+    const linkedOrders = productionOrders.filter(
+      (order) => order.clientId && ids.has(order.clientId),
+    );
+    const negotiationCount = clientsToDelete.reduce(
+      (total, client) => total + client.negotiations.length,
+      0,
+    );
+    const confirmation =
+      clientsToDelete.length === 1
+        ? `Excluir definitivamente “${clientsToDelete[0].name}” (${clientsToDelete[0].code})? Serão apagados ${negotiationCount} negociação(ões), ${linkedOrders.length} pedido(s) de produção vinculado(s) e seus anexos. Backups anteriores não serão apagados.`
+        : `Excluir definitivamente todos os ${clientsToDelete.length} clientes? Serão apagados ${negotiationCount} negociação(ões), ${linkedOrders.length} pedido(s) de produção vinculado(s) e seus anexos. Backups anteriores não serão apagados.`;
+    if (!window.confirm(confirmation)) return;
+
+    try {
+      const nextClients = deleteClientDrafts(clients, ids);
+      const nextProductionOrders = removeProductionOrdersForClients(
+        productionOrders,
+        ids,
+      );
+      persistClientDeletion(
+        nextClients,
+        nextProductionOrders,
+        clientAttachmentIds(clients, ids),
+      );
+      setClients(nextClients);
+      setProductionOrders(nextProductionOrders);
+      if (ids.has(selectedClientId)) setSelectedClientId('');
+      setShowClientForm(false);
+      setEditingClientId('');
+      setClientForm(emptyClientForm);
+      setShowNegotiationForm(false);
+      setEditingNegotiationId('');
+      setNegotiationForm(emptyNegotiationForm());
+      setNegotiationFeedback('');
+      setClientFeedback(
+        clientsToDelete.length === 1
+          ? 'Cliente e todos os dados vinculados foram excluídos do banco atual.'
+          : 'Todos os clientes e dados vinculados foram excluídos do banco atual.',
+      );
+      safeLogger.record({
+        severity: 'info',
+        eventCode:
+          clientsToDelete.length === 1
+            ? 'CLIENT_DELETION_COMPLETED'
+            : 'ALL_CLIENTS_DELETION_COMPLETED',
+        module: 'clients',
+        operation: 'delete-client-data',
+        result: 'success',
+      });
+    } catch (error) {
+      const incident = safeLogger.record(
+        {
+          severity: 'error',
+          eventCode: 'CLIENT_DELETION_FAILED',
+          module: 'clients',
+          operation: 'delete-client-data',
+          result: 'failure',
+          errorCode: 'LOCAL_DATABASE_WRITE_FAILED',
+        },
+        error,
+      );
+      setClientFeedback(
+        `Não foi possível excluir os dados. Diagnóstico: ${incident.incidentCode}.`,
+      );
+    }
   }
 
   function submitClient(event: FormEvent<HTMLFormElement>) {
@@ -538,7 +615,7 @@ export function ClientsPanel() {
               Pesquise pelo nome, telefone, e-mail ou código.
             </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <input
               aria-label="Pesquisar clientes"
               className="min-w-0 rounded-xl border border-[#d9cabc] bg-[#fcfaf7] px-3 py-2.5 text-sm outline-none focus:border-[#b8860b] focus:ring-3 focus:ring-[#c69a45]/15"
@@ -547,6 +624,15 @@ export function ClientsPanel() {
               type="search"
               value={query}
             />
+            {clients.length ? (
+              <button
+                className="shrink-0 rounded-xl border border-rose-300 bg-white px-4 py-2.5 text-sm font-bold text-rose-700 hover:bg-rose-50"
+                onClick={() => deleteClients(clients.map((client) => client.id))}
+                type="button"
+              >
+                Excluir todos
+              </button>
+            ) : null}
             <button
               className="shrink-0 rounded-xl bg-[#5c3d2e] px-4 py-2.5 text-sm font-bold text-white"
               onClick={startNewClient}
@@ -556,6 +642,15 @@ export function ClientsPanel() {
             </button>
           </div>
         </div>
+
+        {!showClientForm && clientFeedback ? (
+          <p
+            className="border-b border-[#e9dfd5] bg-[#fcfaf7] px-5 py-3 text-sm font-semibold text-[#705f55]"
+            role="status"
+          >
+            {clientFeedback}
+          </p>
+        ) : null}
 
         {visibleClients.length > 0 ? (
           <div className="overflow-x-auto">
@@ -623,6 +718,13 @@ export function ClientsPanel() {
                           >
                             Abrir histórico
                           </button>
+                          <button
+                            className="font-bold text-rose-700 hover:underline"
+                            onClick={() => deleteClients([client.id])}
+                            type="button"
+                          >
+                            Excluir
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -666,6 +768,13 @@ export function ClientsPanel() {
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
+              <button
+                className="rounded-xl border border-rose-300 bg-white px-4 py-2.5 text-sm font-bold text-rose-700 hover:bg-rose-50"
+                onClick={() => deleteClients([selectedClient.id])}
+                type="button"
+              >
+                Excluir cliente
+              </button>
               <button
                 className="rounded-xl border border-[#d7c8ba] bg-white px-4 py-2.5 text-sm font-bold text-[#70574a]"
                 onClick={() => startEditingClient(selectedClient.id)}
@@ -980,11 +1089,12 @@ export function ClientsPanel() {
         </section>
       ) : null}
 
-      <p className="rounded-2xl border border-amber-300/60 bg-amber-50 p-4 text-sm leading-6 text-amber-950">
-        {desktopAvailable
-          ? 'Os cadastros ficam no banco local deste computador e entram nos backups automáticos. Nome, telefone, e-mail e negociações nunca são enviados aos logs técnicos.'
-          : 'Modo de demonstração: use apenas informações fictícias. Os dados ficam somente neste dispositivo e não são enviados aos logs.'}
-      </p>
+      {!desktopAvailable ? (
+        <p className="rounded-2xl border border-amber-300/60 bg-amber-50 p-4 text-sm leading-6 text-amber-950">
+          Modo de demonstração: use apenas informações fictícias. Os dados ficam
+          somente neste dispositivo e não são enviados aos logs.
+        </p>
+      ) : null}
     </div>
   );
 }

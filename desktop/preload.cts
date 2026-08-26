@@ -27,6 +27,15 @@ const api: AmbroDesktopApi = {
     writeMany(documents) {
       unwrap<null>(ipcRenderer.sendSync('storage:write-many', documents));
     },
+    deleteClientData(documents, attachmentIds) {
+      unwrap<null>(
+        ipcRenderer.sendSync(
+          'clients:delete-data',
+          documents,
+          attachmentIds,
+        ),
+      );
+    },
   },
   backup: {
     create() {

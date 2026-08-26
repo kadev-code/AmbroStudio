@@ -3,8 +3,10 @@ import {
   addClientNegotiation,
   addClientNegotiationAttachments,
   clientMetrics,
+  clientAttachmentIds,
   completeClientNegotiation,
   createClientDraft,
+  deleteClientDrafts,
   editClientDraft,
   editClientNegotiation,
   findPhoneConflict,
@@ -39,6 +41,51 @@ describe('client drafts', () => {
     expect(withNegotiation[0].negotiations).toHaveLength(1);
     expect(withNegotiation[0].negotiations[0].paymentStatus).toBe('Pendente');
     expect(clientMetrics(withNegotiation[0]).purchases).toBe(1);
+  });
+
+  it('remove somente os clientes escolhidos e identifica seus anexos', () => {
+    const first = createClientDraft(
+      [],
+      { name: 'Primeiro Cliente', phone: '11999990000', email: '' },
+      { id: clientId, timestamp: '2026-08-25T10:00:00.000Z' },
+    );
+    const secondId = '13943509-8fb2-4785-a526-c661c37172da';
+    const twoClients = createClientDraft(
+      first,
+      { name: 'Segundo Cliente', phone: '11988880000', email: '' },
+      { id: secondId, timestamp: '2026-08-25T11:00:00.000Z' },
+    );
+    const withNegotiation = addClientNegotiation(
+      twoClients,
+      clientId,
+      {
+        title: 'Kit com anexo',
+        status: 'Aprovada',
+        amountCents: 10_000,
+        occurredOn: '2026-08-25',
+      },
+      { id: negotiationId, timestamp: '2026-08-25T12:00:00.000Z' },
+    );
+    const attachmentId = '55162f65-5cb8-4bd8-ad8d-43a490f73f30';
+    const withAttachment = addClientNegotiationAttachments(
+      withNegotiation,
+      clientId,
+      negotiationId,
+      [{
+        id: attachmentId,
+        fileName: 'proposta.pdf',
+        mimeType: 'application/pdf',
+        sizeBytes: 1200,
+        addedAt: '2026-08-25T13:00:00.000Z',
+      }],
+    );
+    const deletedIds = new Set([clientId]);
+
+    expect(clientAttachmentIds(withAttachment, deletedIds)).toEqual([
+      attachmentId,
+    ]);
+    expect(deleteClientDrafts(withAttachment, deletedIds)).toHaveLength(1);
+    expect(deleteClientDrafts(withAttachment, deletedIds)[0].id).toBe(secondId);
   });
 
   it('mantém pagamento separado da situação e conclui ao arquivar a produção', () => {

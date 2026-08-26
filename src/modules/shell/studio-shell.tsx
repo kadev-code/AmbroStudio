@@ -102,14 +102,11 @@ export function StudioShell() {
         </aside>
 
         <section className="min-w-0 lg:flex lg:h-dvh lg:min-h-0 lg:flex-col">
-          <header className="flex shrink-0 flex-col gap-4 border-b border-[#dfd4c7] bg-white/75 px-5 py-5 backdrop-blur sm:flex-row sm:items-center sm:justify-between lg:px-8">
+          <header className="shrink-0 border-b border-[#dfd4c7] bg-white/75 px-5 py-5 backdrop-blur lg:px-8">
             <div>
               <p className="text-xs font-bold uppercase tracking-[0.18em] text-[#9a6f57]">{heading.eyebrow}</p>
               <h1 className="mt-1 text-2xl font-bold tracking-tight sm:text-3xl">{heading.title}</h1>
               <p className="mt-1 text-sm text-[#7c685d]">{heading.description}</p>
-            </div>
-            <div className="flex items-center gap-3">
-              <span className="hidden rounded-xl border border-[#d8c9bb] bg-white px-4 py-2.5 text-xs font-bold text-[#7b665b] sm:block">{desktopAvailable ? 'SQLite + backup local' : 'Dados de demonstração'}</span>
             </div>
           </header>
 
