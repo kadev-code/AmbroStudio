@@ -1,6 +1,6 @@
 {
   "name": "ambro-studio-app",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Gestão local de produção, precificação e clientes da Ambro Personalizados.",
   "author": "Ambro Personalizados",
   "private": true,
@@ -18,7 +18,7 @@
     "desktop:compile": "tsc -p tsconfig.desktop.json",
     "desktop:dev": "pnpm desktop:compile && node scripts/desktop-dev.mjs",
     "desktop:dir": "pnpm build && pnpm desktop:compile && electron-builder --dir",
-    "desktop:build": "pnpm build && pnpm desktop:compile && electron-builder --win nsis",
+    "desktop:build": "pnpm build && pnpm desktop:compile && electron-builder --win nsis --publish never",
     "preview": "vite preview --host localhost --port 3000",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
