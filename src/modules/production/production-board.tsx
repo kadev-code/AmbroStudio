@@ -1,5 +1,9 @@
 import { useMemo, useState, type FormEvent } from 'react';
 import {
+  completeClientNegotiation,
+  outstandingClientPayments,
+} from '@/src/domain/clients/client';
+import {
   archiveProductionOrder,
   changeProductionPriority,
   createProductionOrder,
@@ -16,6 +20,8 @@ import {
   type ProductionPriority,
 } from '@/src/domain/production/sort-orders';
 import { loadClientDrafts } from '@/src/infrastructure/clients/local-client-draft-repository';
+import { safeLogger } from '@/src/infrastructure/logging/safe-logger';
+import { persistProductionCompletion } from '@/src/infrastructure/production/local-production-completion-repository';
 import {
   loadProductionDrafts,
   persistProductionDrafts,
@@ -46,6 +52,16 @@ const priorityAccents: Record<ProductionPriority, string> = {
   normal: 'border-l-amber-400',
   low: 'border-l-stone-300',
 };
+
+const money = new Intl.NumberFormat('pt-BR', {
+  style: 'currency',
+  currency: 'BRL',
+});
+
+const paymentStatusTone = {
+  Pendente: 'bg-rose-100 text-rose-800',
+  'Pagou metade': 'bg-amber-100 text-amber-800',
+} as const;
 
 function localDateKey(value = new Date()) {
   return [
@@ -108,7 +124,7 @@ function transitionActions(status: ProductionStatus) {
 
 export function ProductionBoard() {
   const [orders, setOrders] = useState(loadProductionDrafts);
-  const [clients] = useState(loadClientDrafts);
+  const [clients, setClients] = useState(loadClientDrafts);
   const [productDrafts] = useState(loadPricingProductDrafts);
   const [showOrderForm, setShowOrderForm] = useState(false);
   const [orderForm, setOrderForm] = useState(emptyOrderForm);
@@ -128,6 +144,11 @@ export function ProductionBoard() {
     ['urgent', 'high'].includes(order.priority),
   ).length;
   const archivedOrders = orders.filter((order) => order.archivedAt);
+  const outstandingPayments = outstandingClientPayments(clients);
+  const outstandingPaymentTotalCents = outstandingPayments.reduce(
+    (total, payment) => total + payment.outstandingCents,
+    0,
+  );
   const formClient = clients.find((client) => client.id === orderForm.clientId);
   const pendingFormNegotiationIds = formClient
     ? pendingNegotiationIdsForProduction(
@@ -243,9 +264,50 @@ export function ProductionBoard() {
 
   function archiveOrder(orderId: string) {
     try {
-      saveOrders(archiveProductionOrder(orders, orderId));
+      const order = orders.find((item) => item.id === orderId);
+      const nextOrders = archiveProductionOrder(orders, orderId);
+      if (order?.clientId && order.negotiationId) {
+        const nextClients = completeClientNegotiation(
+          clients,
+          order.clientId,
+          order.negotiationId,
+        );
+        if (!persistProductionCompletion(nextOrders, nextClients)) {
+          const incident = safeLogger.record({
+            severity: 'error',
+            eventCode: 'PRODUCTION_COMPLETION_SAVE_FAILED',
+            module: 'production',
+            operation: 'archive-and-complete-sale',
+            result: 'failure',
+            errorCode: 'LOCAL_STORAGE_WRITE_FAILED',
+          });
+          setFeedback(
+            `Não foi possível arquivar. Diagnóstico: ${incident.incidentCode}.`,
+          );
+          return;
+        }
+        setOrders(nextOrders);
+        setClients(nextClients);
+        setFeedback(
+          'Pedido arquivado e venda concluída. O pagamento continua sendo acompanhado.',
+        );
+        return;
+      }
+
+      saveOrders(nextOrders);
       setFeedback('Pedido arquivado e mantido no histórico do cliente.');
-    } catch {
+    } catch (error) {
+      safeLogger.record(
+        {
+          severity: 'warning',
+          eventCode: 'PRODUCTION_ORDER_ARCHIVE_FAILED',
+          module: 'production',
+          operation: 'archive-production-order',
+          result: 'failure',
+          errorCode: 'INVALID_PRODUCTION_ARCHIVE',
+        },
+        error,
+      );
       setFeedback('Somente pedidos entregues podem ser arquivados.');
     }
   }
@@ -279,6 +341,69 @@ export function ProductionBoard() {
           </article>
         ))}
       </section>
+
+      {outstandingPayments.length > 0 ? (
+        <section className="rounded-3xl border border-amber-300 bg-amber-50 p-5 shadow-[0_8px_24px_rgb(120_72_24/7%)]">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-[0.14em] text-amber-800">
+                Atenção aos recebimentos
+              </p>
+              <h2 className="mt-1 text-lg font-bold text-amber-950">
+                {outstandingPayments.length}{' '}
+                {outstandingPayments.length === 1
+                  ? 'pagamento precisa de acompanhamento'
+                  : 'pagamentos precisam de acompanhamento'}
+              </h2>
+              <p className="mt-1 text-sm text-amber-900/75">
+                Vendas aprovadas ou concluídas que ainda não foram totalmente pagas.
+              </p>
+            </div>
+            <div className="rounded-2xl bg-white/75 px-4 py-3 text-right">
+              <p className="text-xs font-bold text-amber-800">Total a receber</p>
+              <p className="mt-1 text-xl font-black text-amber-950">
+                {money.format(outstandingPaymentTotalCents / 100)}
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-4 max-h-64 space-y-2 overflow-y-auto pr-1">
+            {outstandingPayments.map((payment) => {
+              const product = productDrafts.find(
+                (item) => item.id === payment.productDraftId,
+              );
+              return (
+                <article
+                  className="flex flex-col gap-3 rounded-2xl border border-amber-200 bg-white p-4 sm:flex-row sm:items-center sm:justify-between"
+                  key={payment.negotiationId}
+                >
+                  <div className="min-w-0">
+                    <p className="truncate font-bold text-[#3d2a22]">
+                      {product?.name || payment.title || 'Venda sem descrição'}
+                    </p>
+                    <p className="mt-1 text-xs text-[#806b60]">
+                      {payment.clientName} · {payment.clientCode}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3 sm:justify-end">
+                    <span
+                      className={`rounded-full px-2.5 py-1 text-xs font-bold ${paymentStatusTone[payment.paymentStatus]}`}
+                    >
+                      {payment.paymentStatus}
+                    </span>
+                    <div className="min-w-32 sm:text-right">
+                      <p className="text-[11px] text-[#806b60]">Falta receber</p>
+                      <p className="font-black text-[#4b3027]">
+                        {money.format(payment.outstandingCents / 100)}
+                      </p>
+                    </div>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
 
       {showOrderForm ? (
         <form className="rounded-3xl border border-[#ded2c5] bg-white p-5 shadow-[0_8px_24px_rgb(76_53_42/5%)]" onSubmit={submitOrder}>

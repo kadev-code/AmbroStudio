@@ -3,11 +3,13 @@ import {
   addClientNegotiation,
   addClientNegotiationAttachments,
   clientMetrics,
+  completeClientNegotiation,
   createClientDraft,
   editClientDraft,
   editClientNegotiation,
   findPhoneConflict,
   filterClientDrafts,
+  outstandingClientPayments,
   removeClientNegotiationAttachment,
 } from './client';
 
@@ -35,7 +37,68 @@ describe('client drafts', () => {
 
     expect(withNegotiation).toHaveLength(1);
     expect(withNegotiation[0].negotiations).toHaveLength(1);
+    expect(withNegotiation[0].negotiations[0].paymentStatus).toBe('Pendente');
     expect(clientMetrics(withNegotiation[0]).purchases).toBe(1);
+  });
+
+  it('mantém pagamento separado da situação e conclui ao arquivar a produção', () => {
+    const clients = addClientNegotiation(
+      createClientDraft(
+        [],
+        { name: 'Cliente Teste', phone: '11999990000', email: '' },
+        { id: clientId, timestamp: '2026-08-25T10:00:00.000Z' },
+      ),
+      clientId,
+      {
+        title: 'Kit aniversário',
+        status: 'Aprovada',
+        paymentStatus: 'Pagou metade',
+        amountCents: 15_001,
+        occurredOn: '2026-08-25',
+      },
+      { id: negotiationId, timestamp: '2026-08-25T11:00:00.000Z' },
+    );
+
+    const completed = completeClientNegotiation(
+      clients,
+      clientId,
+      negotiationId,
+      '2026-08-25T12:00:00.000Z',
+    );
+
+    expect(completed[0].negotiations[0]).toMatchObject({
+      status: 'Concluída',
+      paymentStatus: 'Pagou metade',
+    });
+    expect(outstandingClientPayments(completed)[0]).toMatchObject({
+      paymentStatus: 'Pagou metade',
+      amountCents: 15_001,
+      outstandingCents: 7_501,
+    });
+  });
+
+  it('não alerta pagamentos quitados, negociações abertas ou perdidas', () => {
+    const base = createClientDraft(
+      [],
+      { name: 'Cliente Teste', phone: '11999990000', email: '' },
+      { id: clientId, timestamp: '2026-08-25T10:00:00.000Z' },
+    );
+    const paid = addClientNegotiation(base, clientId, {
+      title: 'Pago',
+      status: 'Concluída',
+      paymentStatus: 'Pago',
+      amountCents: 10_000,
+      occurredOn: '2026-08-25',
+    });
+    const negotiating = addClientNegotiation(paid, clientId, {
+      title: 'Aberta',
+      status: 'Em negociação',
+      paymentStatus: 'Pendente',
+      amountCents: 10_000,
+      occurredOn: '2026-08-25',
+    });
+
+    expect(outstandingClientPayments(negotiating)).toEqual([]);
   });
 
   it('gera códigos sequenciais e pesquisa pelos contatos', () => {

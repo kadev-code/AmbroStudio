@@ -227,6 +227,52 @@ export class DesktopDatabase {
       .run(key, validatedValue, new Date().toISOString());
   }
 
+  writeDocuments(documents: unknown) {
+    if (!Array.isArray(documents) || documents.length < 1 || documents.length > 20) {
+      throw new Error('INVALID_DOCUMENT_BATCH');
+    }
+
+    const validatedDocuments = documents.map((document) => {
+      if (!document || typeof document !== 'object' || Array.isArray(document)) {
+        throw new Error('INVALID_DOCUMENT_BATCH');
+      }
+      const candidate = document as {
+        key?: unknown;
+        serializedValue?: unknown;
+      };
+      assertDocumentKey(candidate.key);
+      return {
+        key: candidate.key,
+        serializedValue: validateSerializedDocument(candidate.serializedValue),
+      };
+    });
+    if (
+      new Set(validatedDocuments.map((document) => document.key)).size !==
+      validatedDocuments.length
+    ) {
+      throw new Error('DUPLICATED_DOCUMENT_KEY');
+    }
+
+    const statement = this.database.prepare(`
+      INSERT INTO app_documents (document_key, document_value, updated_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(document_key) DO UPDATE SET
+        document_value = excluded.document_value,
+        updated_at = excluded.updated_at
+    `);
+    this.database.exec('BEGIN IMMEDIATE');
+    try {
+      const timestamp = new Date().toISOString();
+      for (const document of validatedDocuments) {
+        statement.run(document.key, document.serializedValue, timestamp);
+      }
+      this.database.exec('COMMIT');
+    } catch (error) {
+      this.database.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
   recordDiagnostic(event: unknown) {
     if (!isSafeDiagnosticEvent(event)) throw new Error('INVALID_DIAGNOSTIC_EVENT');
     const serialized = JSON.stringify(event);

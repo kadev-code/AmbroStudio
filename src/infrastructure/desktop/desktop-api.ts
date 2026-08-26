@@ -59,6 +59,9 @@ export type AmbroDesktopApi = {
   storage: {
     read(key: string): string | null;
     write(key: string, serializedValue: string): void;
+    writeMany(
+      documents: Array<{ key: string; serializedValue: string }>,
+    ): void;
   };
   backup: {
     create(): Promise<DesktopActionResult>;

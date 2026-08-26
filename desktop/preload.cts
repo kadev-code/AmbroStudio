@@ -24,6 +24,9 @@ const api: AmbroDesktopApi = {
     write(key, serializedValue) {
       unwrap<null>(ipcRenderer.sendSync('storage:write', key, serializedValue));
     },
+    writeMany(documents) {
+      unwrap<null>(ipcRenderer.sendSync('storage:write-many', documents));
+    },
   },
   backup: {
     create() {

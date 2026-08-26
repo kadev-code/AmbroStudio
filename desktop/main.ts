@@ -103,6 +103,12 @@ function registerIpc() {
       return null;
     });
   });
+  ipcMain.on('storage:write-many', (event, documents: unknown) => {
+    event.returnValue = actionResult(() => {
+      database.writeDocuments(documents);
+      return null;
+    });
+  });
   ipcMain.on('diagnostics:record', (_event, diagnosticEvent: unknown) => {
     try {
       database.recordDiagnostic(diagnosticEvent);

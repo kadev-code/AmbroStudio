@@ -38,4 +38,36 @@ describe('local client draft repository', () => {
         .interestedProductIds,
     ).toEqual([]);
   });
+
+  it('migra negociações antigas como pagamento pendente', () => {
+    const clients = createClientDraft(
+      [],
+      { name: 'Cliente Antigo', phone: '11999990000', email: '' },
+      {
+        id: '8528ca44-862b-4f9a-8265-094b85cf02fa',
+        timestamp: '2026-08-24T12:00:00.000Z',
+      },
+    );
+    const legacyClient = {
+      ...clients[0],
+      negotiations: [
+        {
+          id: '92568c03-95e2-45ee-938c-7031986464df',
+          productDraftId: null,
+          title: 'Venda antiga',
+          quantity: 1,
+          status: 'Concluída',
+          amountCents: 10_000,
+          occurredOn: '2026-08-24',
+          attachments: [],
+          createdAt: '2026-08-24T12:00:00.000Z',
+        },
+      ],
+    };
+
+    expect(
+      parseStoredClientDrafts(JSON.stringify([legacyClient]))[0]
+        .negotiations[0].paymentStatus,
+    ).toBe('Pendente');
+  });
 });

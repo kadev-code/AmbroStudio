@@ -7,6 +7,12 @@ export const negotiationStatuses = [
   'Perdida',
 ] as const;
 
+export const paymentStatuses = [
+  'Pendente',
+  'Pagou metade',
+  'Pago',
+] as const;
+
 export const clientContactInputSchema = z.object({
   name: z.string().trim().min(2).max(120),
   phone: z.string().trim().min(8).max(30),
@@ -19,6 +25,7 @@ export const negotiationInputSchema = z.object({
   title: z.string().trim().max(120).default(''),
   quantity: z.number().int().min(1).max(100_000).default(1),
   status: z.enum(negotiationStatuses),
+  paymentStatus: z.enum(paymentStatuses).default('Pendente'),
   amountCents: z.number().int().nonnegative().max(999_999_999),
   occurredOn: z.string().date(),
 });
@@ -55,6 +62,20 @@ export type NegotiationAttachment = z.infer<
   typeof negotiationAttachmentSchema
 >;
 export type ClientDraft = z.infer<typeof clientDraftSchema>;
+export type PaymentStatus = (typeof paymentStatuses)[number];
+
+export type OutstandingClientPayment = {
+  clientId: string;
+  clientCode: string;
+  clientName: string;
+  negotiationId: string;
+  productDraftId: string | null;
+  title: string;
+  paymentStatus: Exclude<PaymentStatus, 'Pago'>;
+  amountCents: number;
+  outstandingCents: number;
+  occurredOn: string;
+};
 
 function nextClientCode(clients: ClientDraft[]) {
   const largestSequence = clients.reduce((largest, client) => {
@@ -164,6 +185,64 @@ export function editClientNegotiation(
         })
       : client,
   );
+}
+
+export function completeClientNegotiation(
+  clients: ClientDraft[],
+  clientId: string,
+  negotiationId: string,
+  timestamp = new Date().toISOString(),
+) {
+  return clients.map((client) =>
+    client.id === clientId
+      ? clientDraftSchema.parse({
+          ...client,
+          negotiations: client.negotiations.map((negotiation) =>
+            negotiation.id === negotiationId
+              ? { ...negotiation, status: 'Concluída' as const }
+              : negotiation,
+          ),
+          updatedAt: timestamp,
+        })
+      : client,
+  );
+}
+
+export function outstandingClientPayments(clients: ClientDraft[]) {
+  return clients
+    .flatMap((client) =>
+      client.negotiations.flatMap((negotiation) => {
+        if (
+          !['Aprovada', 'Concluída'].includes(negotiation.status) ||
+          negotiation.paymentStatus === 'Pago'
+        ) {
+          return [];
+        }
+
+        return [
+          {
+            clientId: client.id,
+            clientCode: client.code,
+            clientName: client.name,
+            negotiationId: negotiation.id,
+            productDraftId: negotiation.productDraftId,
+            title: negotiation.title,
+            paymentStatus: negotiation.paymentStatus,
+            amountCents: negotiation.amountCents,
+            outstandingCents:
+              negotiation.paymentStatus === 'Pagou metade'
+                ? Math.ceil(negotiation.amountCents / 2)
+                : negotiation.amountCents,
+            occurredOn: negotiation.occurredOn,
+          } satisfies OutstandingClientPayment,
+        ];
+      }),
+    )
+    .sort(
+      (first, second) =>
+        first.occurredOn.localeCompare(second.occurredOn) ||
+        first.clientName.localeCompare(second.clientName, 'pt-BR'),
+    );
 }
 
 export function addClientNegotiationAttachments(

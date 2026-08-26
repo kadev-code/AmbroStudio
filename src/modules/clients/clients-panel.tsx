@@ -11,6 +11,7 @@ import {
   findPhoneConflict,
   negotiationInputSchema,
   negotiationStatuses,
+  paymentStatuses,
   removeClientNegotiationAttachment,
   type NegotiationAttachment,
   type NegotiationInput,
@@ -29,6 +30,11 @@ const money = new Intl.NumberFormat('pt-BR', {
   style: 'currency',
   currency: 'BRL',
 });
+const paymentStatusTone = {
+  Pendente: 'bg-rose-100 text-rose-800',
+  'Pagou metade': 'bg-amber-100 text-amber-800',
+  Pago: 'bg-emerald-100 text-emerald-800',
+} as const;
 const date = new Intl.DateTimeFormat('pt-BR', { timeZone: 'UTC' });
 const emptyClientForm = {
   name: '',
@@ -51,6 +57,7 @@ const emptyNegotiationForm = (): NegotiationInput => ({
   title: '',
   quantity: 1,
   status: 'Em negociação',
+  paymentStatus: 'Pendente',
   amountCents: 0,
   occurredOn: currentLocalDate(),
 });
@@ -205,7 +212,7 @@ export function ClientsPanel() {
     const parsed = negotiationInputSchema.safeParse(negotiationForm);
     if (!parsed.success) {
       setNegotiationFeedback(
-        'Revise o produto, a quantidade, o valor, a data e a situação.',
+        'Revise o produto, a quantidade, o valor, a data, a situação e o pagamento.',
       );
       return;
     }
@@ -253,6 +260,7 @@ export function ClientsPanel() {
       title: negotiation.title,
       quantity: negotiation.quantity,
       status: negotiation.status,
+      paymentStatus: negotiation.paymentStatus,
       amountCents: negotiation.amountCents,
       occurredOn: negotiation.occurredOn,
     });
@@ -686,7 +694,7 @@ export function ClientsPanel() {
               className="mt-5 rounded-2xl border border-[#e2d6ca] bg-[#f8f3ed] p-4"
               onSubmit={submitNegotiation}
             >
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-7">
                 <label className="block">
                   <span className="mb-1.5 block text-xs font-bold text-[#665147]">
                     Produto *
@@ -708,6 +716,26 @@ export function ClientsPanel() {
                       <option key={product.id} value={product.id}>
                         {product.name}
                       </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="mb-1.5 block text-xs font-bold text-[#665147]">
+                    Pagamento
+                  </span>
+                  <select
+                    className="w-full rounded-xl border border-[#d9cabc] bg-white px-3 py-3 text-sm outline-none focus:border-[#b8860b] focus:ring-3 focus:ring-[#c69a45]/15"
+                    onChange={(event) =>
+                      setNegotiationForm((current) => ({
+                        ...current,
+                        paymentStatus: event.target
+                          .value as NegotiationInput['paymentStatus'],
+                      }))
+                    }
+                    value={negotiationForm.paymentStatus ?? 'Pendente'}
+                  >
+                    {paymentStatuses.map((status) => (
+                      <option key={status}>{status}</option>
                     ))}
                   </select>
                 </label>
@@ -891,6 +919,11 @@ export function ClientsPanel() {
                     </button>
                     <span className="rounded-full bg-[#f0eadf] px-2.5 py-1 text-xs font-bold text-[#70594d]">
                       {negotiation.status}
+                    </span>
+                    <span
+                      className={`rounded-full px-2.5 py-1 text-xs font-bold ${paymentStatusTone[negotiation.paymentStatus]}`}
+                    >
+                      {negotiation.paymentStatus}
                     </span>
                     <p className="min-w-24 font-black">
                       {money.format(negotiation.amountCents / 100)}

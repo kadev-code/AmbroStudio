@@ -34,6 +34,27 @@ describe('desktop database', () => {
     database.close();
   });
 
+  it('atualiza vários documentos na mesma transação', () => {
+    const { database } = createTestDatabase();
+    const clientsKey = 'ambro-studio:client-drafts:v1';
+    const productionKey = 'ambro-studio:production-drafts:v1';
+    database.writeDocuments([
+      { key: clientsKey, serializedValue: '[{"status":"Concluída"}]' },
+      { key: productionKey, serializedValue: '[{"archived":true}]' },
+    ]);
+
+    expect(database.readDocument(clientsKey)).toContain('Concluída');
+    expect(database.readDocument(productionKey)).toContain('archived');
+    expect(() =>
+      database.writeDocuments([
+        { key: clientsKey, serializedValue: '[]' },
+        { key: 'chave-livre', serializedValue: '[]' },
+      ]),
+    ).toThrow('INVALID_DOCUMENT_KEY');
+    expect(database.readDocument(clientsKey)).toContain('Concluída');
+    database.close();
+  });
+
   it('cria e restaura um backup validado', () => {
     const { database, directory } = createTestDatabase();
     const key = 'ambro-studio:pricing-product-drafts:v1';
