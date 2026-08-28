@@ -1,9 +1,15 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { extname, join } from 'node:path';
+import { rmSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { DesktopUpdateState } from '../src/infrastructure/desktop/desktop-api.js';
+import {
+  addAttachmentsInBackground,
+  cacheAttachmentInBackground,
+} from './attachment-service.js';
+import { createBackupInBackground } from './backup-service.js';
 import { DesktopDatabase } from './database.js';
 import { UpdateManager } from './update-manager.js';
 
@@ -19,33 +25,55 @@ if (smokeTest) app.disableHardwareAcceleration();
 let database: DesktopDatabase;
 let updateManager: UpdateManager | undefined;
 let automaticBackupTimer: NodeJS.Timeout | undefined;
+let automaticBackupPromise: Promise<void> | undefined;
 
 function attachmentCacheDirectory() {
   return join(app.getPath('temp'), 'AmbroStudio');
 }
 
-function clearAttachmentCache() {
+function smokeDatabasePath() {
+  return join(app.getPath('temp'), `ambro-studio-smoke-${process.pid}.sqlite`);
+}
+
+function isExpectedSmokeDatabasePath(path: string) {
+  return (
+    dirname(resolve(path)) === resolve(app.getPath('temp')) &&
+    basename(path).startsWith('ambro-studio-smoke-') &&
+    basename(path).endsWith('.sqlite')
+  );
+}
+
+async function clearAttachmentCache() {
   try {
-    rmSync(attachmentCacheDirectory(), { recursive: true, force: true });
+    await rm(attachmentCacheDirectory(), { recursive: true, force: true });
   } catch {
     // Um visualizador externo pode manter o arquivo aberto até o próximo início.
   }
 }
 
-function writeAutomaticBackup() {
+async function writeAutomaticBackup() {
   const backupDirectory = join(app.getPath('userData'), 'backups');
   const weekday = new Date().getDay();
-  database.createBackup(
+  await createBackupInBackground(
+    database.path,
     join(backupDirectory, `ambro-studio-auto-${weekday}.ambrobackup`),
   );
 }
 
 function createAutomaticBackup() {
-  try {
-    writeAutomaticBackup();
-  } catch {
-    // A operação continua; a pessoa usuária ainda pode gerar um backup manual.
-  }
+  if (automaticBackupPromise) return;
+  automaticBackupPromise = writeAutomaticBackup()
+    .catch(() => {
+      recordAppTechnicalEvent({
+        eventCode: 'AUTOMATIC_BACKUP_FAILED',
+        operation: 'create-automatic-backup',
+        result: 'failure',
+        errorCode: 'BACKGROUND_BACKUP_FAILED',
+      });
+    })
+    .finally(() => {
+      automaticBackupPromise = undefined;
+    });
 }
 
 function actionResult<T>(action: () => T) {
@@ -59,13 +87,27 @@ function actionResult<T>(action: () => T) {
   }
 }
 
+function timedActionResult<T>(operation: string, action: () => T) {
+  const startedAt = performance.now();
+  const result = actionResult(action);
+  if (performance.now() - startedAt >= 250) {
+    recordAppTechnicalEvent({
+      eventCode: 'SLOW_DESKTOP_OPERATION',
+      operation,
+      result: 'failure',
+      errorCode: 'DESKTOP_OPERATION_OVER_250MS',
+    });
+  }
+  return result;
+}
+
 function broadcastUpdateState(state: DesktopUpdateState) {
   for (const window of BrowserWindow.getAllWindows()) {
     window.webContents.send('updates:state', state);
   }
 }
 
-function recordUpdateTechnicalEvent(event: {
+function recordAppTechnicalEvent(event: {
   eventCode: string;
   operation: string;
   result: 'success' | 'failure';
@@ -95,16 +137,18 @@ function recordUpdateTechnicalEvent(event: {
 
 function registerIpc() {
   ipcMain.on('storage:read', (event, key: unknown) => {
-    event.returnValue = actionResult(() => database.readDocument(key));
+    event.returnValue = timedActionResult('read-local-document', () =>
+      database.readDocument(key),
+    );
   });
   ipcMain.on('storage:write', (event, key: unknown, value: unknown) => {
-    event.returnValue = actionResult(() => {
+    event.returnValue = timedActionResult('write-local-document', () => {
       database.writeDocument(key, value);
       return null;
     });
   });
   ipcMain.on('storage:write-many', (event, documents: unknown) => {
-    event.returnValue = actionResult(() => {
+    event.returnValue = timedActionResult('write-local-documents', () => {
       database.writeDocuments(documents);
       return null;
     });
@@ -112,7 +156,7 @@ function registerIpc() {
   ipcMain.on(
     'clients:delete-data',
     (event, documents: unknown, attachmentIds: unknown) => {
-      event.returnValue = actionResult(() => {
+      event.returnValue = timedActionResult('delete-client-data', () => {
         database.deleteClientData(documents, attachmentIds);
         return null;
       });
@@ -162,19 +206,22 @@ function registerIpc() {
     }
     return {
       status: 'success',
-      attachments: database.addAttachments(selection.filePaths),
+      attachments: await addAttachmentsInBackground(
+        database.path,
+        selection.filePaths,
+      ),
     };
   });
 
   ipcMain.handle('attachments:open', async (_event, attachmentId: unknown) => {
-    const attachment = database.readAttachment(attachmentId);
-    const cacheDirectory = attachmentCacheDirectory();
-    mkdirSync(cacheDirectory, { recursive: true });
-    const cachedPath = join(
-      cacheDirectory,
-      `${attachment.metadata.id}${extname(attachment.metadata.fileName).toLowerCase()}`,
+    if (typeof attachmentId !== 'string') {
+      throw new Error('INVALID_ATTACHMENT_ID');
+    }
+    const cachedPath = await cacheAttachmentInBackground(
+      database.path,
+      attachmentId,
+      attachmentCacheDirectory(),
     );
-    writeFileSync(cachedPath, attachment.content);
     const openError = await shell.openPath(cachedPath);
     if (openError) throw new Error('ATTACHMENT_OPEN_FAILED');
   });
@@ -191,7 +238,7 @@ function registerIpc() {
       filters: [{ name: 'Backup Ambro Studio', extensions: ['ambrobackup'] }],
     });
     if (selection.canceled || !selection.filePath) return { status: 'cancelled' };
-    database.createBackup(selection.filePath);
+    await createBackupInBackground(database.path, selection.filePath);
     return { status: 'success', path: selection.filePath };
   });
 
@@ -225,6 +272,7 @@ function registerIpc() {
 }
 
 async function createWindow() {
+  let rendererUnresponsive = false;
   const window = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -250,6 +298,33 @@ async function createWindow() {
     if (!url.startsWith(allowedUrl)) event.preventDefault();
   });
   if (!smokeTest) window.once('ready-to-show', () => window.show());
+  window.on('unresponsive', () => {
+    if (rendererUnresponsive) return;
+    rendererUnresponsive = true;
+    recordAppTechnicalEvent({
+      eventCode: 'WINDOW_UNRESPONSIVE',
+      operation: 'monitor-window-responsiveness',
+      result: 'failure',
+      errorCode: 'RENDERER_NOT_RESPONDING',
+    });
+  });
+  window.on('responsive', () => {
+    if (!rendererUnresponsive) return;
+    rendererUnresponsive = false;
+    recordAppTechnicalEvent({
+      eventCode: 'WINDOW_RESPONSIVE_AGAIN',
+      operation: 'monitor-window-responsiveness',
+      result: 'success',
+    });
+  });
+  window.webContents.on('render-process-gone', (_event, details) => {
+    recordAppTechnicalEvent({
+      eventCode: 'RENDER_PROCESS_GONE',
+      operation: 'monitor-render-process',
+      result: 'failure',
+      errorCode: `RENDERER_${details.reason.replaceAll('-', '_').toUpperCase()}`,
+    });
+  });
 
   if (developmentUrl) {
     await window.loadURL(developmentUrl);
@@ -262,19 +337,26 @@ async function createWindow() {
       "Boolean(window.ambroDesktop?.isDesktop && document.querySelector('main'))",
     );
     if (!rendererReady) throw new Error('DESKTOP_RENDERER_NOT_READY');
+    const smokeBackupPath = `${database.path}.ambrobackup`;
+    await createBackupInBackground(database.path, smokeBackupPath);
+    if (isExpectedSmokeDatabasePath(database.path)) {
+      rmSync(smokeBackupPath, { force: true });
+    }
     app.quit();
   }
 }
 
 app.whenReady().then(async () => {
-  clearAttachmentCache();
+  await clearAttachmentCache();
   database = new DesktopDatabase(
-    smokeTest ? ':memory:' : join(app.getPath('userData'), 'ambro-studio.sqlite'),
+    smokeTest
+      ? smokeDatabasePath()
+      : join(app.getPath('userData'), 'ambro-studio.sqlite'),
   );
   updateManager = new UpdateManager({
     broadcast: broadcastUpdateState,
     beforeInstall: writeAutomaticBackup,
-    recordTechnicalEvent: recordUpdateTechnicalEvent,
+    recordTechnicalEvent: recordAppTechnicalEvent,
   });
   if (!smokeTest) {
     createAutomaticBackup();
@@ -296,7 +378,12 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   updateManager?.dispose();
   if (automaticBackupTimer) clearInterval(automaticBackupTimer);
-  if (!smokeTest) createAutomaticBackup();
+  const databasePath = database?.path;
   database?.close();
-  clearAttachmentCache();
+  if (smokeTest && databasePath && isExpectedSmokeDatabasePath(databasePath)) {
+    for (const path of [databasePath, `${databasePath}-shm`, `${databasePath}-wal`]) {
+      rmSync(path, { force: true });
+    }
+  }
+  void clearAttachmentCache();
 });

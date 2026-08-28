@@ -1,4 +1,11 @@
-import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { basename, dirname, extname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
@@ -202,12 +209,21 @@ function isSafeDiagnosticEvent(value: unknown): value is SafeStoredDiagnosticEve
 export class DesktopDatabase {
   private readonly database: DatabaseSync;
 
-  constructor(readonly path: string) {
-    mkdirSync(dirname(path), { recursive: true });
-    this.database = new DatabaseSync(path);
+  constructor(
+    readonly path: string,
+    options: { readOnly?: boolean } = {},
+  ) {
+    if (!options.readOnly) mkdirSync(dirname(path), { recursive: true });
+    this.database = new DatabaseSync(path, { readOnly: options.readOnly });
+    if (options.readOnly) {
+      this.database.exec('PRAGMA query_only = ON; PRAGMA foreign_keys = ON;');
+      return;
+    }
     this.database.exec(`
       PRAGMA journal_mode = WAL;
       PRAGMA foreign_keys = ON;
+      PRAGMA synchronous = NORMAL;
+      PRAGMA wal_autocheckpoint = 1000;
       CREATE TABLE IF NOT EXISTS app_documents (
         document_key TEXT PRIMARY KEY,
         document_value TEXT NOT NULL,
@@ -229,8 +245,11 @@ export class DesktopDatabase {
       );
       CREATE INDEX IF NOT EXISTS diagnostic_events_incident_code
         ON diagnostic_events (incident_code);
-      PRAGMA user_version = 2;
+      CREATE INDEX IF NOT EXISTS diagnostic_events_created_at
+        ON diagnostic_events (created_at DESC);
+      PRAGMA user_version = 3;
     `);
+    this.pruneDiagnostics();
   }
 
   readDocument(key: unknown) {
@@ -335,6 +354,7 @@ export class DesktopDatabase {
         VALUES (?, ?, ?, ?)
       `)
       .run(event.eventId, event.incidentCode, event.timestamp, serialized);
+    this.pruneDiagnostics();
   }
 
   addAttachments(filePaths: string[]) {
@@ -437,23 +457,32 @@ export class DesktopDatabase {
 
   createBackup(destination: string) {
     mkdirSync(dirname(destination), { recursive: true });
-    const rows = this.database
-      .prepare('SELECT document_key, document_value FROM app_documents ORDER BY document_key')
-      .all() as Array<{ document_key: string; document_value: string }>;
-    const attachmentRows = this.database
-      .prepare(`
-        SELECT attachment_id, file_name, mime_type, size_bytes, added_at, content
-        FROM negotiation_attachments
-        ORDER BY added_at
-      `)
-      .all() as Array<{
+    let rows: Array<{ document_key: string; document_value: string }> = [];
+    let attachmentRows: Array<{
       attachment_id: string;
       file_name: string;
       mime_type: string;
       size_bytes: number;
       added_at: string;
       content: Uint8Array;
-    }>;
+    }> = [];
+    this.database.exec('BEGIN');
+    try {
+      rows = this.database
+        .prepare('SELECT document_key, document_value FROM app_documents ORDER BY document_key')
+        .all() as typeof rows;
+      attachmentRows = this.database
+        .prepare(`
+          SELECT attachment_id, file_name, mime_type, size_bytes, added_at, content
+          FROM negotiation_attachments
+          ORDER BY added_at
+        `)
+        .all() as typeof attachmentRows;
+      this.database.exec('COMMIT');
+    } catch (error) {
+      this.database.exec('ROLLBACK');
+      throw error;
+    }
     const backup: BackupFile = {
       format: 'ambro-studio-backup',
       version: 2,
@@ -470,7 +499,18 @@ export class DesktopDatabase {
         contentBase64: Buffer.from(row.content).toString('base64'),
       })),
     };
-    writeFileSync(destination, JSON.stringify(backup, null, 2), 'utf8');
+    const temporaryDestination = `${destination}.${randomUUID()}.tmp`;
+    try {
+      writeFileSync(
+        temporaryDestination,
+        JSON.stringify(backup, null, 2),
+        'utf8',
+      );
+      renameSync(temporaryDestination, destination);
+    } catch (error) {
+      rmSync(temporaryDestination, { force: true });
+      throw error;
+    }
   }
 
   restoreBackup(source: string) {
@@ -555,5 +595,17 @@ export class DesktopDatabase {
 
   close() {
     this.database.close();
+  }
+
+  private pruneDiagnostics() {
+    this.database.exec(`
+      DELETE FROM diagnostic_events
+      WHERE event_id IN (
+        SELECT event_id
+        FROM diagnostic_events
+        ORDER BY created_at DESC
+        LIMIT -1 OFFSET 5000
+      )
+    `);
   }
 }

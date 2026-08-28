@@ -17,7 +17,7 @@ type UpdateTechnicalEvent = {
 
 type UpdateManagerOptions = {
   broadcast(state: DesktopUpdateState): void;
-  beforeInstall(): void;
+  beforeInstall(): Promise<void>;
   recordTechnicalEvent(event: UpdateTechnicalEvent): void;
 };
 
@@ -31,6 +31,9 @@ export class UpdateManager {
   private updater: InstanceType<typeof NsisUpdater> | undefined;
   private startupTimer: NodeJS.Timeout | undefined;
   private checkTimer: NodeJS.Timeout | undefined;
+  private checkPromise: Promise<void> | undefined;
+  private downloadPromise: Promise<void> | undefined;
+  private installing = false;
   private state: DesktopUpdateState;
 
   constructor(private readonly options: UpdateManagerOptions) {
@@ -122,22 +125,21 @@ export class UpdateManager {
   }
 
   async check() {
-    if (!this.updater || this.state.status === 'checking') return;
-    try {
-      await this.updater.checkForUpdates();
-    } catch {
-      this.publishState('error', { errorCode: 'UPDATE_CHECK_FAILED' });
-      this.options.recordTechnicalEvent({
-        eventCode: 'UPDATE_CHECK_FAILED',
-        operation: 'check-update',
-        result: 'failure',
-        errorCode: 'UPDATE_CHECK_FAILED',
-      });
-    }
+    if (!this.updater || this.checkPromise) return this.checkPromise;
+    this.checkPromise = this.performCheck().finally(() => {
+      this.checkPromise = undefined;
+    });
+    return this.checkPromise;
   }
 
   async download() {
-    if (!this.updater || this.state.status !== 'available') return;
+    if (
+      !this.updater ||
+      this.state.status !== 'available' ||
+      this.downloadPromise
+    ) {
+      return this.downloadPromise;
+    }
     this.publishState('downloading', {
       availableVersion: this.state.availableVersion,
       downloadPercent: 0,
@@ -147,23 +149,23 @@ export class UpdateManager {
       operation: 'download-update',
       result: 'success',
     });
-    try {
-      await this.updater.downloadUpdate();
-    } catch {
-      this.publishState('error', { errorCode: 'UPDATE_DOWNLOAD_FAILED' });
-      this.options.recordTechnicalEvent({
-        eventCode: 'UPDATE_DOWNLOAD_FAILED',
-        operation: 'download-update',
-        result: 'failure',
-        errorCode: 'UPDATE_DOWNLOAD_FAILED',
-      });
-    }
+    this.downloadPromise = this.performDownload().finally(() => {
+      this.downloadPromise = undefined;
+    });
+    return this.downloadPromise;
   }
 
-  install() {
-    if (!this.updater || this.state.status !== 'downloaded') return;
+  async install() {
+    if (
+      !this.updater ||
+      this.state.status !== 'downloaded' ||
+      this.installing
+    ) {
+      return;
+    }
+    this.installing = true;
     try {
-      this.options.beforeInstall();
+      await this.options.beforeInstall();
     } catch {
       this.publishState('error', { errorCode: 'UPDATE_BACKUP_FAILED' });
       this.options.recordTechnicalEvent({
@@ -172,6 +174,7 @@ export class UpdateManager {
         result: 'failure',
         errorCode: 'UPDATE_BACKUP_FAILED',
       });
+      this.installing = false;
       return;
     }
     this.options.recordTechnicalEvent({
@@ -182,6 +185,7 @@ export class UpdateManager {
     try {
       this.updater.quitAndInstall(false, true);
     } catch {
+      this.installing = false;
       this.publishState('error', { errorCode: 'UPDATE_INSTALL_FAILED' });
       this.options.recordTechnicalEvent({
         eventCode: 'UPDATE_INSTALL_FAILED',
@@ -195,6 +199,34 @@ export class UpdateManager {
   dispose() {
     if (this.startupTimer) clearTimeout(this.startupTimer);
     if (this.checkTimer) clearInterval(this.checkTimer);
+  }
+
+  private async performCheck() {
+    try {
+      await this.updater?.checkForUpdates();
+    } catch {
+      this.publishState('error', { errorCode: 'UPDATE_CHECK_FAILED' });
+      this.options.recordTechnicalEvent({
+        eventCode: 'UPDATE_CHECK_FAILED',
+        operation: 'check-update',
+        result: 'failure',
+        errorCode: 'UPDATE_CHECK_FAILED',
+      });
+    }
+  }
+
+  private async performDownload() {
+    try {
+      await this.updater?.downloadUpdate();
+    } catch {
+      this.publishState('error', { errorCode: 'UPDATE_DOWNLOAD_FAILED' });
+      this.options.recordTechnicalEvent({
+        eventCode: 'UPDATE_DOWNLOAD_FAILED',
+        operation: 'download-update',
+        result: 'failure',
+        errorCode: 'UPDATE_DOWNLOAD_FAILED',
+      });
+    }
   }
 
   private publishState(
