@@ -31,7 +31,11 @@ function updateStatusMessage(state: DesktopUpdateState) {
   }
 }
 
-export function DiagnosticsPanel() {
+export function DiagnosticsPanel({
+  onOpenReleaseNotes,
+}: {
+  onOpenReleaseNotes: () => void;
+}) {
   const [incidentCode, setIncidentCode] = useState<string>();
   const [desktopFeedback, setDesktopFeedback] = useState('');
   const [updateState, setUpdateState] = useState<DesktopUpdateState>({
@@ -231,6 +235,25 @@ export function DiagnosticsPanel() {
               <strong className="font-mono text-lg tracking-wider">{incidentCode}</strong>
             </div>
           ) : null}
+        </div>
+
+        <div className="mt-4 rounded-2xl border border-[#eadfd4] bg-[#faf7f3] p-5">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h3 className="text-sm font-bold">Novidades e hotfixes</h3>
+              <p className="mt-1 text-sm leading-6 text-[#776359]">
+                Veja o que foi adicionado, o motivo das mudanças e como usar
+                cada função nova.
+              </p>
+            </div>
+            <button
+              className="shrink-0 rounded-xl bg-[#5c3d2e] px-4 py-2.5 text-sm font-bold text-white"
+              onClick={onOpenReleaseNotes}
+              type="button"
+            >
+              Ler novidades e hotfixes
+            </button>
+          </div>
         </div>
 
         {desktopAvailable ? (

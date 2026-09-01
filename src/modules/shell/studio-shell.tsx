@@ -5,8 +5,9 @@ import { ClientsPanel } from '@/src/modules/clients/clients-panel';
 import { DiagnosticsPanel } from '@/src/modules/diagnostics/diagnostics-panel';
 import { PricingSimulator } from '@/src/modules/pricing/pricing-simulator';
 import { ProductionBoard } from '@/src/modules/production/production-board';
+import { ReleaseNotesPanel } from '@/src/modules/updates/release-notes-panel';
 
-type ModuleId = 'production' | 'pricing' | 'clients' | 'diagnostics';
+type ModuleId = 'production' | 'pricing' | 'clients' | 'diagnostics' | 'updates';
 
 const navigation: Array<{
   id: ModuleId;
@@ -43,14 +44,17 @@ const headings: Record<
     title: 'Diagnóstico',
     description: 'Rastreamento de falhas sem dados pessoais.',
   },
+  updates: {
+    eyebrow: 'Novidades do aplicativo',
+    title: 'Atualizações',
+    description: 'Novas funções, melhorias e hotfixes do Ambro Studio.',
+  },
 };
 
 export function StudioShell() {
   const [activeModule, setActiveModule] = useState<ModuleId>('production');
   const contentScrollRef = useRef<HTMLDivElement>(null);
   const heading = headings[activeModule];
-  const desktopAvailable =
-    typeof window !== 'undefined' && Boolean(window.ambroDesktop);
 
   useEffect(() => {
     contentScrollRef.current?.scrollTo({ top: 0 });
@@ -61,7 +65,7 @@ export function StudioShell() {
     <main className="min-h-screen bg-[#f6f1e9] text-[#34251f] lg:h-dvh lg:overflow-hidden">
       <div className="grid min-h-screen lg:h-dvh lg:min-h-0 lg:grid-cols-[248px_minmax(0,1fr)]">
         <aside className="border-b border-[#dfd4c7] bg-[#4b3027] px-5 py-5 text-white lg:h-dvh lg:overflow-y-auto lg:border-b-0 lg:border-r">
-          <div className="flex items-center justify-between lg:block">
+          <div className="flex items-center">
             <div className="flex items-center gap-3">
               <div className="grid h-11 w-11 place-items-center rounded-2xl bg-[#c69a45] text-lg font-black text-[#3d291f] shadow-sm">A</div>
               <div>
@@ -69,7 +73,6 @@ export function StudioShell() {
                 <p className="text-xs text-[#d9c8bc]">Central de gestão</p>
               </div>
             </div>
-            <span className="rounded-full border border-white/15 bg-white/10 px-3 py-1 text-[11px] font-semibold lg:mt-5 lg:inline-flex">{desktopAvailable ? 'Aplicativo local' : 'Ambiente de teste'}</span>
           </div>
 
           <nav aria-label="Navegação principal" className="mt-5 grid grid-cols-4 gap-2 lg:mt-8 lg:grid-cols-1">
@@ -117,7 +120,16 @@ export function StudioShell() {
             {activeModule === 'production' ? <ProductionBoard /> : null}
             {activeModule === 'pricing' ? <PricingSimulator /> : null}
             {activeModule === 'clients' ? <ClientsPanel /> : null}
-            {activeModule === 'diagnostics' ? <DiagnosticsPanel /> : null}
+            {activeModule === 'diagnostics' ? (
+              <DiagnosticsPanel
+                onOpenReleaseNotes={() => setActiveModule('updates')}
+              />
+            ) : null}
+            {activeModule === 'updates' ? (
+              <ReleaseNotesPanel
+                onBack={() => setActiveModule('diagnostics')}
+              />
+            ) : null}
           </div>
         </section>
       </div>
