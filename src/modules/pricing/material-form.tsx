@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState, type FormEvent } from 'react';
 import {
   materialInputSchema,
   measurementUnitLabels,
@@ -20,6 +20,31 @@ type MaterialFormProps = {
   onCancel(): void;
   onSave(input: MaterialInput): void;
 };
+
+function materialValidationMessage(path: PropertyKey[], message: string) {
+  const field = path[0];
+  if (field === 'description') return 'Informe a descrição do material.';
+  if (field === 'purchasePriceCents') {
+    return 'Informe um preço válido, maior que zero e de até R$ 9.999.999,99.';
+  }
+  if (field === 'purchasedQuantity') {
+    return 'Informe uma quantidade válida e maior que zero.';
+  }
+  if (field === 'purchaseUrl' || message === 'HTTPS_REQUIRED') {
+    return 'O link de compra precisa ser válido e começar com https://.';
+  }
+  return 'Revise os campos informados antes de salvar o material.';
+}
+
+function materialSaveErrorMessage(error: unknown) {
+  if (
+    error instanceof Error &&
+    error.message === 'DUPLICATED_MATERIAL_DESCRIPTION'
+  ) {
+    return 'Já existe um material com esta descrição. Edite o cadastro existente.';
+  }
+  return 'Não foi possível salvar o material. Os dados anteriores foram preservados.';
+}
 
 export function MaterialForm({
   initialMaterial,
@@ -47,6 +72,8 @@ export function MaterialForm({
   );
   const [notes, setNotes] = useState(initialMaterial?.notes ?? '');
   const [feedback, setFeedback] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const submittingRef = useRef(false);
 
   const unitCost = useMemo(() => {
     const price = parseLocalizedNumber(purchasePrice);
@@ -55,7 +82,9 @@ export function MaterialForm({
     return (price * 100) / quantity;
   }, [purchasePrice, purchasedQuantity]);
 
-  function submit() {
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (submittingRef.current) return;
     const parsed = materialInputSchema.safeParse({
       description,
       purchasePriceCents: Math.round(
@@ -69,17 +98,19 @@ export function MaterialForm({
     if (!parsed.success) {
       const issue = parsed.error.issues[0];
       setFeedback(
-        issue?.message === 'HTTPS_REQUIRED'
-          ? 'O link de compra precisa começar com https://.'
-          : 'Revise descrição, preço e quantidade. Preço e quantidade precisam ser maiores que zero.',
+        materialValidationMessage(issue?.path ?? [], issue?.message ?? ''),
       );
       return;
     }
 
+    submittingRef.current = true;
+    setIsSubmitting(true);
     try {
       onSave(parsed.data);
-    } catch {
-      setFeedback('Não foi possível salvar o material. Tente novamente.');
+    } catch (error) {
+      submittingRef.current = false;
+      setIsSubmitting(false);
+      setFeedback(materialSaveErrorMessage(error));
     }
   }
 
@@ -87,7 +118,11 @@ export function MaterialForm({
     'w-full rounded-xl border border-[#d9cabc] bg-white px-3 py-3 text-sm outline-none focus:border-[#b8860b] focus:ring-3 focus:ring-[#c69a45]/15';
 
   return (
-    <section className="rounded-2xl border border-[#e2d6ca] bg-[#f8f3ed] p-4 sm:p-5">
+    <form
+      className="rounded-2xl border border-[#e2d6ca] bg-[#f8f3ed] p-4 sm:p-5"
+      noValidate
+      onSubmit={submit}
+    >
       <div className="flex items-center justify-between gap-3">
         <div>
           <p className="text-xs font-bold uppercase tracking-[0.14em] text-[#9a6f57]">
@@ -114,7 +149,10 @@ export function MaterialForm({
           <input
             className={inputClass}
             maxLength={120}
-            onChange={(event) => setDescription(event.target.value)}
+            onChange={(event) => {
+              setDescription(event.target.value);
+              setFeedback('');
+            }}
             placeholder="Ex.: Papel fotográfico"
             type="text"
             value={description}
@@ -129,7 +167,10 @@ export function MaterialForm({
             <input
               className="min-w-0 flex-1 bg-transparent px-2 py-3 text-right text-sm outline-none"
               inputMode="decimal"
-              onChange={(event) => setPurchasePrice(event.target.value)}
+              onChange={(event) => {
+                setPurchasePrice(event.target.value);
+                setFeedback('');
+              }}
               placeholder="0,00"
               value={purchasePrice}
             />
@@ -142,7 +183,10 @@ export function MaterialForm({
           <input
             className={inputClass + ' text-right'}
             inputMode="decimal"
-            onChange={(event) => setPurchasedQuantity(event.target.value)}
+            onChange={(event) => {
+              setPurchasedQuantity(event.target.value);
+              setFeedback('');
+            }}
             placeholder="0"
             value={purchasedQuantity}
           />
@@ -153,9 +197,10 @@ export function MaterialForm({
           </span>
           <select
             className={inputClass}
-            onChange={(event) =>
-              setMeasurementUnit(event.target.value as MeasurementUnit)
-            }
+            onChange={(event) => {
+              setMeasurementUnit(event.target.value as MeasurementUnit);
+              setFeedback('');
+            }}
             value={measurementUnit}
           >
             {measurementUnits.map((unit) => (
@@ -182,7 +227,10 @@ export function MaterialForm({
           <input
             className={inputClass}
             maxLength={1_000}
-            onChange={(event) => setPurchaseUrl(event.target.value)}
+            onChange={(event) => {
+              setPurchaseUrl(event.target.value);
+              setFeedback('');
+            }}
             placeholder="https://..."
             type="url"
             value={purchaseUrl}
@@ -195,7 +243,10 @@ export function MaterialForm({
           <textarea
             className={inputClass + ' min-h-24 resize-y'}
             maxLength={2_000}
-            onChange={(event) => setNotes(event.target.value)}
+            onChange={(event) => {
+              setNotes(event.target.value);
+              setFeedback('');
+            }}
             placeholder="Informações adicionais sobre este material..."
             value={notes}
           />
@@ -215,14 +266,18 @@ export function MaterialForm({
             Cancelar
           </button>
           <button
-            className="rounded-xl bg-[#5c3d2e] px-4 py-2.5 text-sm font-bold text-white"
-            onClick={submit}
-            type="button"
+            className="rounded-xl bg-[#5c3d2e] px-4 py-2.5 text-sm font-bold text-white disabled:cursor-wait disabled:opacity-60"
+            disabled={isSubmitting}
+            type="submit"
           >
-            {initialMaterial ? 'Salvar alterações' : 'Salvar material'}
+            {isSubmitting
+              ? 'Salvando...'
+              : initialMaterial
+                ? 'Salvar alterações'
+                : 'Salvar material'}
           </button>
         </div>
       </div>
-    </section>
+    </form>
   );
 }

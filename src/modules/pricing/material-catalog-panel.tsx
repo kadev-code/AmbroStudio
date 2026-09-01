@@ -97,6 +97,7 @@ export function MaterialCatalogPanel({
         <div className="mt-5">
           <MaterialForm
             initialMaterial={editingMaterial}
+            key={editingMaterial?.id ?? 'new-material'}
             onCancel={() => {
               setIsCreating(false);
               setEditingId(null);

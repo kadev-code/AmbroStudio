@@ -3,13 +3,16 @@ import { calculatePrice } from '../../domain/pricing/calculate-price';
 import {
   materialUsagesCostCents,
   materialUsagesSchema,
+  pricingMaterialsSchema,
   type MaterialUsage,
   type PricingMaterial,
 } from '../../domain/pricing/material';
 import {
   readStoredDocument,
   writeStoredDocument,
+  writeStoredDocuments,
 } from '../../infrastructure/persistence/document-storage';
+import { PRICING_MATERIALS_STORAGE_KEY } from '../../infrastructure/pricing/local-material-catalog-repository';
 import { pricingFormSchema, type PricingFormState } from './pricing-form-state';
 
 export const PRICING_PRODUCTS_STORAGE_KEY =
@@ -83,6 +86,27 @@ export function persistPricingProductDrafts(drafts: PricingProductDraft[]) {
     return true;
   } catch {
     // Rascunhos são opcionais e nunca devem impedir a simulação de preço.
+    return false;
+  }
+}
+
+export function persistPricingCatalogAndProductDrafts(
+  materials: PricingMaterial[],
+  drafts: PricingProductDraft[],
+) {
+  try {
+    writeStoredDocuments([
+      {
+        key: PRICING_MATERIALS_STORAGE_KEY,
+        serializedValue: JSON.stringify(pricingMaterialsSchema.parse(materials)),
+      },
+      {
+        key: PRICING_PRODUCTS_STORAGE_KEY,
+        serializedValue: JSON.stringify(pricingProductDraftsSchema.parse(drafts)),
+      },
+    ]);
+    return true;
+  } catch {
     return false;
   }
 }

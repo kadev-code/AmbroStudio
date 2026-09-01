@@ -76,4 +76,25 @@ describe('pricing material', () => {
       ),
     ).toThrow('DUPLICATED_MATERIAL_USAGE');
   });
+
+  it('impede materiais duplicados sem bloquear a edição do mesmo cadastro', () => {
+    const [material] = createPricingMaterial([], materialInput, {
+      id: '03c9eaa2-56db-4415-8c12-8e40d38f791c',
+    });
+
+    expect(() =>
+      createPricingMaterial([material], {
+        ...materialInput,
+        description: '  COLA BRANCA  ',
+      }),
+    ).toThrow('DUPLICATED_MATERIAL_DESCRIPTION');
+
+    expect(() =>
+      updatePricingMaterial([material], material.id, {
+        ...materialInput,
+        description: 'Cola branca',
+        notes: 'Cadastro atualizado',
+      }),
+    ).not.toThrow();
+  });
 });

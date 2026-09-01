@@ -69,11 +69,34 @@ export type MaterialInput = z.infer<typeof materialInputSchema>;
 export type PricingMaterial = z.infer<typeof pricingMaterialSchema>;
 export type MaterialUsage = z.infer<typeof materialUsageSchema>;
 
+function normalizedMaterialDescription(description: string) {
+  return description.trim().toLocaleLowerCase('pt-BR');
+}
+
+function assertUniqueMaterialDescription(
+  materials: PricingMaterial[],
+  description: string,
+  ignoredMaterialId?: string,
+) {
+  const normalizedDescription = normalizedMaterialDescription(description);
+  if (
+    materials.some(
+      (material) =>
+        material.id !== ignoredMaterialId &&
+        normalizedMaterialDescription(material.description) ===
+          normalizedDescription,
+    )
+  ) {
+    throw new Error('DUPLICATED_MATERIAL_DESCRIPTION');
+  }
+}
+
 export function createPricingMaterial(
   materials: PricingMaterial[],
   input: MaterialInput,
   options: { id?: string; timestamp?: string } = {},
 ) {
+  assertUniqueMaterialDescription(materials, input.description);
   const timestamp = options.timestamp ?? new Date().toISOString();
   const material = pricingMaterialSchema.parse({
     ...materialInputSchema.parse(input),
@@ -92,6 +115,11 @@ export function updatePricingMaterial(
   timestamp = new Date().toISOString(),
 ) {
   const validatedInput = materialInputSchema.parse(input);
+  assertUniqueMaterialDescription(
+    materials,
+    validatedInput.description,
+    materialId,
+  );
   return materials.map((material) =>
     material.id === materialId
       ? pricingMaterialSchema.parse({

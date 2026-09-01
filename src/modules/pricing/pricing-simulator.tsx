@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import {
   calculatePrice,
   PricingCalculationError,
@@ -15,20 +15,22 @@ import {
   type PricingMaterial,
 } from '@/src/domain/pricing/material';
 import { safeLogger } from '@/src/infrastructure/logging/safe-logger';
-import {
-  loadPricingMaterials,
-  persistPricingMaterials,
-} from '@/src/infrastructure/pricing/local-material-catalog-repository';
+import { loadPricingMaterials } from '@/src/infrastructure/pricing/local-material-catalog-repository';
 import { MaterialCatalogPanel } from './material-catalog-panel';
 import { MaterialSelectorDialog } from './material-selector-dialog';
-import { money } from './pricing-format';
+import { money, parseLocalizedNumber } from './pricing-format';
 import {
   loadPricingDraft,
   persistPricingDraft,
+  pricingFieldInputsFromForm,
+  updatePricingFormFromInput,
+  type PricingEditableField,
+  type PricingFieldInputs,
   type PricingFormState,
 } from './pricing-form-state';
 import {
   loadPricingProductDrafts,
+  persistPricingCatalogAndProductDrafts,
   persistPricingProductDrafts,
   refreshPricingProductMaterialCosts,
   savePricingProductDraft,
@@ -38,10 +40,8 @@ const maximumMoneyValue = 9_999_999.99;
 const maximumProductionMinutes = 100_000;
 const maximumPercentage = 100;
 
-type EditablePricingField = Exclude<keyof PricingFormState, 'materials'>;
-
 const fields: Array<{
-  key: EditablePricingField;
+  key: PricingEditableField;
   label: string;
   suffix: string;
   max: number;
@@ -57,9 +57,22 @@ const fields: Array<{
   { key: 'channelPercent', label: 'Taxa do canal', suffix: '%', max: maximumPercentage, step: 0.1 },
 ];
 
-function fieldLimitMessage(form: PricingFormState) {
+function fieldLimitMessage(
+  form: PricingFormState,
+  fieldInputs: PricingFieldInputs,
+) {
   if (form.materials > maximumMoneyValue) {
     return `O custo dos materiais aceita no máximo ${money.format(maximumMoneyValue)}.`;
+  }
+
+  const invalidField = fields.find((field) => {
+    const rawValue = fieldInputs[field.key];
+    if (!rawValue.trim()) return false;
+    const parsedValue = parseLocalizedNumber(rawValue);
+    return !Number.isFinite(parsedValue) || parsedValue < 0;
+  });
+  if (invalidField) {
+    return `Informe um número válido e maior ou igual a zero em “${invalidField.label}”.`;
   }
 
   const exceededField = fields.find((field) => form[field.key] > field.max);
@@ -110,6 +123,7 @@ export function PricingSimulator() {
       Math.round(form.materials * 100) || null;
     return {
       form,
+      fieldInputs: pricingFieldInputsFromForm(form),
       legacyMaterialsCostCents,
       baseline: pricingSnapshot('', form, [], legacyMaterialsCostCents),
     };
@@ -118,6 +132,7 @@ export function PricingSimulator() {
     'simulation',
   );
   const [form, setForm] = useState(initialState.form);
+  const [fieldInputs, setFieldInputs] = useState(initialState.fieldInputs);
   const [materials, setMaterials] = useState(loadPricingMaterials);
   const [materialUsages, setMaterialUsages] = useState<MaterialUsage[]>([]);
   const [legacyMaterialsCostCents, setLegacyMaterialsCostCents] = useState<
@@ -143,6 +158,15 @@ export function PricingSimulator() {
     () => ({ ...form, materials: materialsCostCents / 100 }),
     [form, materialsCostCents],
   );
+  const deferredEffectiveForm = useDeferredValue(effectiveForm);
+
+  useEffect(() => {
+    const persistenceTimer = window.setTimeout(
+      () => persistPricingDraft(effectiveForm),
+      250,
+    );
+    return () => window.clearTimeout(persistenceTimer);
+  }, [effectiveForm]);
 
   const hasUnsavedChanges =
     pricingSnapshot(
@@ -153,22 +177,22 @@ export function PricingSimulator() {
     ) !== baseline;
 
   const calculation = useMemo(() => {
-    const limitError = fieldLimitMessage(effectiveForm);
+    const limitError = fieldLimitMessage(deferredEffectiveForm, fieldInputs);
     if (limitError) return { result: null, errorMessage: limitError };
 
     try {
       return {
         result: calculatePrice({
           materialsCostCents,
-          laborCostPerHourCents: Math.round(effectiveForm.laborHour * 100),
-          fixedCostPerHourCents: Math.round(effectiveForm.fixedHour * 100),
-          productionMinutes: Math.round(effectiveForm.minutes),
-          packagingCostCents: Math.round(effectiveForm.packaging * 100),
+          laborCostPerHourCents: Math.round(deferredEffectiveForm.laborHour * 100),
+          fixedCostPerHourCents: Math.round(deferredEffectiveForm.fixedHour * 100),
+          productionMinutes: Math.round(deferredEffectiveForm.minutes),
+          packagingCostCents: Math.round(deferredEffectiveForm.packaging * 100),
           depreciationCostCents: 0,
-          wasteBasisPoints: Math.round(effectiveForm.wastePercent * 100),
-          desiredMarginBasisPoints: Math.round(effectiveForm.marginPercent * 100),
-          taxBasisPoints: Math.round(effectiveForm.taxPercent * 100),
-          channelFeeBasisPoints: Math.round(effectiveForm.channelPercent * 100),
+          wasteBasisPoints: Math.round(deferredEffectiveForm.wastePercent * 100),
+          desiredMarginBasisPoints: Math.round(deferredEffectiveForm.marginPercent * 100),
+          taxBasisPoints: Math.round(deferredEffectiveForm.taxPercent * 100),
+          channelFeeBasisPoints: Math.round(deferredEffectiveForm.channelPercent * 100),
           channelFixedFeeCents: 0,
         }),
         errorMessage: null,
@@ -176,7 +200,7 @@ export function PricingSimulator() {
     } catch (error) {
       return { result: null, errorMessage: calculationErrorMessage(error) };
     }
-  }, [effectiveForm, materialsCostCents]);
+  }, [deferredEffectiveForm, fieldInputs, materialsCostCents]);
 
   function confirmDiscardChanges() {
     return (
@@ -187,16 +211,14 @@ export function PricingSimulator() {
     );
   }
 
-  function updateField(key: EditablePricingField, value: string) {
-    const number = Number(value);
+  function updateField(key: PricingEditableField, value: string) {
+    setFieldInputs((current) => ({ ...current, [key]: value }));
     setForm((current) => {
-      const next = {
-        ...current,
-        materials: materialsCostCents / 100,
-        [key]: Number.isFinite(number) && number >= 0 ? number : 0,
-      };
-      persistPricingDraft(next);
-      return next;
+      return updatePricingFormFromInput(
+        { ...current, materials: materialsCostCents / 100 },
+        key,
+        value,
+      );
     });
     setProductFeedback('');
   }
@@ -212,6 +234,7 @@ export function PricingSimulator() {
       setActiveProductId('');
       setProductName('');
       setForm(nextForm);
+      setFieldInputs(pricingFieldInputsFromForm(nextForm));
       setMaterialUsages([]);
       setLegacyMaterialsCostCents(null);
       persistPricingDraft(nextForm);
@@ -222,6 +245,7 @@ export function PricingSimulator() {
     setActiveProductId(selected.id);
     setProductName(selected.name);
     setForm({ ...selected.form });
+    setFieldInputs(pricingFieldInputsFromForm(selected.form));
     setMaterialUsages([...selected.materialUsages]);
     setLegacyMaterialsCostCents(selected.legacyMaterialsCostCents);
     persistPricingDraft(selected.form);
@@ -241,6 +265,7 @@ export function PricingSimulator() {
     setActiveProductId('');
     setProductName('');
     setForm(nextForm);
+    setFieldInputs(pricingFieldInputsFromForm(nextForm));
     setMaterialUsages([]);
     setLegacyMaterialsCostCents(null);
     persistPricingDraft(nextForm);
@@ -291,6 +316,7 @@ export function PricingSimulator() {
     setActiveProductId(saved.id);
     setProductName(saved.name);
     setForm(saved.form);
+    setFieldInputs(pricingFieldInputsFromForm(saved.form));
     persistPricingDraft(saved.form);
     setBaseline(
       pricingSnapshot(
@@ -310,13 +336,17 @@ export function PricingSimulator() {
   function changeMaterialsCatalog(nextMaterials: PricingMaterial[]) {
     try {
       const wasDirty = hasUnsavedChanges;
-      persistPricingMaterials(nextMaterials);
       const refreshedDrafts = refreshPricingProductMaterialCosts(
         productDrafts,
         nextMaterials,
       );
-      if (!persistPricingProductDrafts(refreshedDrafts)) {
-        throw new Error('PRICING_PRODUCTS_REFRESH_WRITE_FAILED');
+      if (
+        !persistPricingCatalogAndProductDrafts(
+          nextMaterials,
+          refreshedDrafts,
+        )
+      ) {
+        throw new Error('PRICING_CATALOG_WRITE_FAILED');
       }
       setMaterials(nextMaterials);
       setProductDrafts(refreshedDrafts);
@@ -531,12 +561,10 @@ export function PricingSimulator() {
                     <input
                       aria-label={field.label}
                       className="min-w-0 flex-1 appearance-none bg-transparent px-2 py-3 text-right text-sm font-semibold outline-none"
-                      max={field.max}
-                      min="0"
+                      inputMode="decimal"
                       onChange={(event) => updateField(field.key, event.target.value)}
-                      step={field.step}
-                      type="number"
-                      value={form[field.key]}
+                      type="text"
+                      value={fieldInputs[field.key]}
                     />
                   </div>
                 </label>

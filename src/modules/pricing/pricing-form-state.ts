@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { decimalInputValue, parseLocalizedNumber } from './pricing-format';
 
 export const PRICING_DRAFT_STORAGE_KEY = 'ambro-studio:pricing-draft:v1';
 
@@ -18,6 +19,21 @@ export const pricingFormSchema = z
 
 export type PricingFormState = z.infer<typeof pricingFormSchema>;
 
+export const pricingEditableFieldKeys = [
+  'laborHour',
+  'fixedHour',
+  'minutes',
+  'packaging',
+  'wastePercent',
+  'marginPercent',
+  'taxPercent',
+  'channelPercent',
+] as const;
+
+export type PricingEditableField = (typeof pricingEditableFieldKeys)[number];
+
+export type PricingFieldInputs = Record<PricingEditableField, string>;
+
 export const DEFAULT_PRICING_FORM: PricingFormState = {
   materials: 0,
   laborHour: 24,
@@ -29,6 +45,31 @@ export const DEFAULT_PRICING_FORM: PricingFormState = {
   taxPercent: 6,
   channelPercent: 5,
 };
+
+export function pricingFieldInputsFromForm(
+  form: PricingFormState,
+): PricingFieldInputs {
+  return Object.fromEntries(
+    pricingEditableFieldKeys.map((key) => [key, decimalInputValue(form[key])]),
+  ) as PricingFieldInputs;
+}
+
+export function pricingNumberFromInput(value: string) {
+  if (!value.trim()) return 0;
+  const parsed = parseLocalizedNumber(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+}
+
+export function updatePricingFormFromInput(
+  form: PricingFormState,
+  key: PricingEditableField,
+  value: string,
+) {
+  return pricingFormSchema.parse({
+    ...form,
+    [key]: pricingNumberFromInput(value),
+  });
+}
 
 export function parsePricingDraft(serializedDraft: string | null) {
   if (!serializedDraft) return { ...DEFAULT_PRICING_FORM };
