@@ -34,22 +34,34 @@ export type QuantityPricingInput = {
   channelFixedFeeCents: number;
 };
 
-export type QuantityPricingBreakdown = {
-  quantity: number;
-  materialsCostCents: number;
-  sheetCostCents: number;
-  sheetsNeeded: number;
-  unitsPerSheet: number | null;
-  productionCostCents: number;
-  unitProductionCostCents: number;
-  minimumUnitPriceCents: number;
-  suggestedUnitPriceCents: number;
-  saleTotalCents: number;
-  estimatedTaxCents: number;
-  estimatedChannelFeeCents: number;
-  estimatedProfitCents: number;
-  unitProfitCents: number;
-};
+const safeMoneySchema = z
+  .number()
+  .int()
+  .nonnegative()
+  .max(Number.MAX_SAFE_INTEGER);
+
+export const quantityPricingBreakdownSchema = z
+  .object({
+    quantity: z.number().int().positive().max(100_000),
+    materialsCostCents: safeMoneySchema,
+    sheetCostCents: safeMoneySchema,
+    sheetsNeeded: z.number().int().nonnegative().max(100_000),
+    unitsPerSheet: z.number().int().positive().nullable(),
+    productionCostCents: safeMoneySchema,
+    unitProductionCostCents: safeMoneySchema,
+    minimumUnitPriceCents: safeMoneySchema,
+    suggestedUnitPriceCents: safeMoneySchema,
+    saleTotalCents: safeMoneySchema,
+    estimatedTaxCents: safeMoneySchema,
+    estimatedChannelFeeCents: safeMoneySchema,
+    estimatedProfitCents: safeMoneySchema,
+    unitProfitCents: safeMoneySchema,
+  })
+  .strict();
+
+export type QuantityPricingBreakdown = z.infer<
+  typeof quantityPricingBreakdownSchema
+>;
 
 export class QuantityPricingError extends Error {
   constructor(
@@ -209,7 +221,7 @@ export function calculateQuantityPrice(
     estimatedTaxCents -
     estimatedChannelFeeCents;
 
-  const result = {
+  const result = quantityPricingBreakdownSchema.parse({
     quantity: input.quantity,
     materialsCostCents,
     sheetCostCents: materialCalculation.sheetCostCents,
@@ -228,7 +240,7 @@ export function calculateQuantityPrice(
     estimatedChannelFeeCents,
     estimatedProfitCents,
     unitProfitCents: Math.round(estimatedProfitCents / input.quantity),
-  };
+  });
   Object.values(result)
     .filter((value): value is number => typeof value === 'number')
     .forEach(assertSafeNonNegativeInteger);

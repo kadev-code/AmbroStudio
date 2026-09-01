@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { createPricingMaterial } from '../../domain/pricing/material';
+import {
+  createPricingMaterial,
+  updatePricingMaterial,
+} from '../../domain/pricing/material';
 import { DEFAULT_PRICING_FORM } from './pricing-form-state';
 import {
   parsePricingProductDrafts,
   pricingProductMaterialsCostCents,
-  refreshPricingProductMaterialCosts,
   savePricingProductDraft,
   suggestedPriceForProductDraft,
 } from './pricing-product-drafts';
@@ -26,6 +28,11 @@ describe('pricing product drafts', () => {
 
     expect(updated).toHaveLength(1);
     expect(updated[0].form.marginPercent).toBe(48);
+    expect(updated[0].versions.map(({ versionNumber }) => versionNumber)).toEqual([
+      2,
+      1,
+    ]);
+    expect(updated[0].versions[1].form.marginPercent).toBe(35);
   });
 
   it('restaura somente listas válidas', () => {
@@ -63,6 +70,8 @@ describe('pricing product drafts', () => {
       commercialUnit: 'unidade',
       packaging: 1,
     });
+    expect(draft.versions).toHaveLength(1);
+    expect(draft.versions[0].calculationRuleVersion).toBe('legacy-import-v1');
   });
 
   it('mantém uma receita diferente por produto e atualiza seu custo', () => {
@@ -81,18 +90,44 @@ describe('pricing product drafts', () => {
     const drafts = savePricingProductDraft([], {
       id: 'ef790ce3-90b6-4e0f-b349-baa6f15025b7',
       name: 'Kit festa',
-      form: { ...DEFAULT_PRICING_FORM, materials: 0 },
       materialUsages: [{ materialId: material.id, usedQuantity: 15 }],
       legacyMaterialsCostCents: null,
+      materials: [material],
+      form: { ...DEFAULT_PRICING_FORM, materials: 0.75 },
       updatedAt: '2026-08-25T10:00:00.000Z',
     });
-    const refreshed = refreshPricingProductMaterialCosts(drafts, [material]);
+    const repricedMaterials = updatePricingMaterial(
+      [material],
+      material.id,
+      {
+        description: material.description,
+        purchasePriceCents: 2_000,
+        purchasedQuantity: material.purchasedQuantity,
+        measurementUnit: material.measurementUnit,
+        purchaseUrl: material.purchaseUrl,
+        notes: material.notes,
+      },
+      '2026-08-26T10:00:00.000Z',
+    );
 
-    expect(pricingProductMaterialsCostCents(refreshed[0], [material])).toBe(75);
-    expect(refreshed[0].form.materials).toBe(0.75);
-    expect(refreshed[0].materialUsages).toEqual([
+    expect(pricingProductMaterialsCostCents(drafts[0], repricedMaterials)).toBe(150);
+    expect(drafts[0].form.materials).toBe(0.75);
+    expect(drafts[0].versions[0].results.unit.materialsCostCents).toBe(75);
+    expect(drafts[0].materialUsages).toEqual([
       { materialId: material.id, usedQuantity: 15 },
     ]);
+
+    const recalculated = savePricingProductDraft(drafts, {
+      id: drafts[0].id,
+      name: drafts[0].name,
+      form: { ...drafts[0].form, materials: 1.5 },
+      materialUsages: drafts[0].materialUsages,
+      legacyMaterialsCostCents: null,
+      materials: repricedMaterials,
+      updatedAt: '2026-08-26T11:00:00.000Z',
+    });
+    expect(recalculated[0].versions[0].results.unit.materialsCostCents).toBe(150);
+    expect(recalculated[0].versions[1].results.unit.materialsCostCents).toBe(75);
   });
 
   it('calcula o preço sugerido salvo no produto', () => {
@@ -107,6 +142,18 @@ describe('pricing product drafts', () => {
   });
 
   it('salva e restaura quantidade, unidade comercial e configuração A4', () => {
+    const [paper] = createPricingMaterial(
+      [],
+      {
+        description: 'Papel A4',
+        purchasePriceCents: 5_000,
+        purchasedQuantity: 100,
+        measurementUnit: 'folha',
+        purchaseUrl: '',
+        notes: '',
+      },
+      { id: '03c9eaa2-56db-4415-8c12-8e40d38f791c' },
+    );
     const drafts = savePricingProductDraft([], {
       id: 'ef790ce3-90b6-4e0f-b349-baa6f15025b7',
       name: 'Tag A4',
@@ -117,10 +164,11 @@ describe('pricing product drafts', () => {
         commercialUnit: 'kit',
       },
       sheetUsage: {
-        materialId: '03c9eaa2-56db-4415-8c12-8e40d38f791c',
+        materialId: paper.id,
         itemWidthCm: 10,
         itemHeightCm: 10,
       },
+      materials: [paper],
       updatedAt: '2026-09-01T10:00:00.000Z',
     });
 
@@ -129,5 +177,7 @@ describe('pricing product drafts', () => {
     expect(restored.form.minimumResaleQuantity).toBe(20);
     expect(restored.form.commercialUnit).toBe('kit');
     expect(restored.sheetUsage).toEqual(drafts[0].sheetUsage);
+    expect(restored.versions[0].results.reference.sheetsNeeded).toBe(13);
+    expect(restored.versions[0].materials[0].notes).toBe('');
   });
 });

@@ -19,6 +19,7 @@ do produto** e será restaurada sempre que o produto for selecionado novamente.
 | Integração e retenção por produto | Concluída |
 | Testes e empacotamento desktop | Concluída na versão 0.4.0 |
 | Quantidades, revenda e aproveitamento A4 | Concluída na versão 0.7.0 |
+| Histórico de versões e tabela de preços | Concluída na versão 0.8.0 |
 
 ## Layout proposto
 
@@ -265,6 +266,20 @@ zerar nem alterar seus preços silenciosamente.
 - Migrar precificações anteriores sem apagar materiais, preços ou custos de
   embalagem já existentes.
 
+### Fase 8 — Histórico e tabela de preços
+
+- Criar uma versão imutável a cada ação **Recalcular e salvar versão**.
+- Armazenar em cada versão os campos, custos dos materiais, quantidades,
+  configuração A4, regra de cálculo e resultados financeiros utilizados.
+- Importar produtos anteriores como versão inicial sem alterar seus cadastros.
+- Exibir na tabela somente os resultados da última versão salva.
+- Exibir preço unitário para Q=1, revenda para sua quantidade mínima e preço da
+  quantidade de referência, sempre com a quantidade identificada.
+- Manter versões anteriores consultáveis no histórico.
+- Impedir que alterações posteriores no catálogo de materiais mudem versões já
+  salvas; a atualização só ocorre ao criar uma nova versão.
+- Utilizar nos clientes o preço unitário da última versão confirmada.
+
 ## Critérios de aceite
 
 1. É possível cadastrar, editar, pesquisar e arquivar um material.
@@ -288,6 +303,10 @@ zerar nem alterar seus preços silenciosamente.
 17. O aproveitamento A4 informa unidades por folha, folhas necessárias e custo.
 18. Quantidade, unidade comercial, revenda e A4 voltam preenchidos ao reabrir a
     precificação.
+19. Alterar um material não muda os valores existentes na tabela.
+20. Recalcular cria uma nova versão e mantém os resultados da versão anterior.
+21. Produtos criados antes do histórico continuam disponíveis e recebem uma
+    versão inicial importada.
 
 ## Fora do escopo desta entrega
 

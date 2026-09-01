@@ -22,6 +22,7 @@ import { safeLogger } from '@/src/infrastructure/logging/safe-logger';
 import { loadPricingMaterials } from '@/src/infrastructure/pricing/local-material-catalog-repository';
 import { MaterialCatalogPanel } from './material-catalog-panel';
 import { MaterialSelectorDialog } from './material-selector-dialog';
+import { PricingPriceTable } from './pricing-price-table';
 import { decimalInputValue, money, parseLocalizedNumber } from './pricing-format';
 import {
   loadPricingDraft,
@@ -38,7 +39,6 @@ import {
   loadPricingProductDrafts,
   persistPricingCatalogAndProductDrafts,
   persistPricingProductDrafts,
-  refreshPricingProductMaterialCosts,
   savePricingProductDraft,
 } from './pricing-product-drafts';
 
@@ -183,7 +183,7 @@ export function PricingSimulator() {
       baseline: pricingSnapshot('', form, [], null, legacyMaterialsCostCents),
     };
   });
-  const [activeTab, setActiveTab] = useState<'simulation' | 'materials'>(
+  const [activeTab, setActiveTab] = useState<'simulation' | 'materials' | 'prices'>(
     'simulation',
   );
   const [form, setForm] = useState(initialState.form);
@@ -367,8 +367,8 @@ export function PricingSimulator() {
   }
 
   function selectProductDraft(id: string) {
-    if (id === activeProductId) return;
-    if (!confirmDiscardChanges()) return;
+    if (id === activeProductId) return true;
+    if (!confirmDiscardChanges()) return false;
 
     setProductFeedback('');
     const selected = productDrafts.find((draft) => draft.id === id);
@@ -392,7 +392,7 @@ export function PricingSimulator() {
       setLegacyMaterialsCostCents(null);
       persistPricingDraft(nextForm);
       setBaseline(pricingSnapshot('', nextForm, [], null, null));
-      return;
+      return true;
     }
 
     setActiveProductId(selected.id);
@@ -424,6 +424,16 @@ export function PricingSimulator() {
         selected.legacyMaterialsCostCents,
       ),
     );
+    setProductFeedback(
+      `Versão ${selected.versions[0]?.versionNumber ?? 1} carregada. Alterações atuais só entrarão na tabela após recalcular e salvar uma nova versão.`,
+    );
+    return true;
+  }
+
+  function openProductForRecalculation(id: string) {
+    if (selectProductDraft(id)) {
+      setActiveTab('simulation');
+    }
   }
 
   function startNewProduct() {
@@ -487,6 +497,7 @@ export function PricingSimulator() {
         materialUsages,
         sheetUsage,
         legacyMaterialsCostCents,
+        materials,
       });
       const saved = nextDrafts[0];
 
@@ -528,8 +539,8 @@ export function PricingSimulator() {
       );
       setProductFeedback(
         activeProductId
-          ? 'Produto e materiais atualizados neste dispositivo.'
-          : 'Produto e materiais salvos neste dispositivo.',
+          ? `Versão ${saved.versions[0]?.versionNumber ?? 1} recalculada e salva. As versões anteriores foram preservadas.`
+          : 'Precificação salva com sua primeira versão neste dispositivo.',
       );
     } finally {
       productSavingRef.current = false;
@@ -539,21 +550,15 @@ export function PricingSimulator() {
 
   async function changeMaterialsCatalog(nextMaterials: PricingMaterial[]) {
     try {
-      const wasDirty = hasUnsavedChanges;
-      const refreshedDrafts = refreshPricingProductMaterialCosts(
-        productDrafts,
-        nextMaterials,
-      );
       if (
         !(await persistPricingCatalogAndProductDrafts(
           nextMaterials,
-          refreshedDrafts,
+          productDrafts,
         ))
       ) {
         throw new Error('PRICING_CATALOG_WRITE_FAILED');
       }
       setMaterials(nextMaterials);
-      setProductDrafts(refreshedDrafts);
 
       if (legacyMaterialsCostCents === null) {
         const nextCost = materialCostPerUnitFor(
@@ -566,19 +571,6 @@ export function PricingSimulator() {
           persistPricingDraft(next);
           return next;
         });
-        if (!wasDirty) {
-          setBaseline(
-            pricingSnapshot(
-              productName,
-              { ...form, materials: nextCost / 100 },
-              materialUsages,
-              sheetMaterialId
-                ? { materialId: sheetMaterialId, width: sheetWidthInput, height: sheetHeightInput }
-                : null,
-              null,
-            ),
-          );
-        }
       }
     } catch (error) {
       safeLogger.record(
@@ -658,12 +650,24 @@ export function PricingSimulator() {
         >
           Materiais de uso
         </button>
+        <button
+          className={`rounded-xl px-4 py-2.5 text-sm font-bold ${activeTab === 'prices' ? 'bg-[#5c3d2e] text-white' : 'text-[#6d5448]'}`}
+          onClick={() => setActiveTab('prices')}
+          type="button"
+        >
+          Tabela de preços
+        </button>
       </nav>
 
       {activeTab === 'materials' ? (
         <MaterialCatalogPanel
           materials={materials}
           onChange={changeMaterialsCatalog}
+        />
+      ) : activeTab === 'prices' ? (
+        <PricingPriceTable
+          drafts={productDrafts}
+          onRecalculate={openProductForRecalculation}
         />
       ) : (
         <div className="grid gap-5 2xl:grid-cols-[minmax(0,1fr)_360px]">
@@ -713,7 +717,7 @@ export function PricingSimulator() {
                     {productSaving
                       ? 'Salvando...'
                       : activeProductId
-                        ? 'Atualizar precificação'
+                        ? 'Recalcular e salvar versão'
                         : 'Salvar precificação'}
                   </button>
                 </div>
