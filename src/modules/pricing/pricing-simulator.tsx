@@ -1,29 +1,35 @@
 'use client';
 
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  calculatePrice,
-  PricingCalculationError,
-} from '@/src/domain/pricing/calculate-price';
+import { PricingCalculationError } from '@/src/domain/pricing/calculate-price';
 import {
   createPricingMaterial,
   materialUsageCostCents,
-  materialUsagesCostCents,
   measurementUnitLabels,
   type MaterialInput,
   type MaterialUsage,
   type PricingMaterial,
 } from '@/src/domain/pricing/material';
+import {
+  calculateQuantityMaterials,
+  calculateQuantityPrice,
+  QuantityPricingError,
+  type QuantityPricingBreakdown,
+  type QuantityPricingInput,
+  type PricingSheetUsage,
+} from '@/src/domain/pricing/quantity-pricing';
 import { safeLogger } from '@/src/infrastructure/logging/safe-logger';
 import { loadPricingMaterials } from '@/src/infrastructure/pricing/local-material-catalog-repository';
 import { MaterialCatalogPanel } from './material-catalog-panel';
 import { MaterialSelectorDialog } from './material-selector-dialog';
-import { money, parseLocalizedNumber } from './pricing-format';
+import { decimalInputValue, money, parseLocalizedNumber } from './pricing-format';
 import {
   loadPricingDraft,
   persistPricingDraft,
   pricingFieldInputsFromForm,
   updatePricingFormFromInput,
+  commercialUnitLabels,
+  commercialUnits,
   type PricingEditableField,
   type PricingFieldInputs,
   type PricingFormState,
@@ -45,16 +51,14 @@ const fields: Array<{
   label: string;
   suffix: string;
   max: number;
-  step?: number;
 }> = [
-  { key: 'laborHour', label: 'Mão de obra por hora', suffix: 'R$', max: maximumMoneyValue, step: 0.01 },
-  { key: 'fixedHour', label: 'Custo fixo por hora', suffix: 'R$', max: maximumMoneyValue, step: 0.01 },
-  { key: 'minutes', label: 'Tempo de produção', suffix: 'min', max: maximumProductionMinutes, step: 1 },
-  { key: 'packaging', label: 'Embalagem por peça', suffix: 'R$', max: maximumMoneyValue, step: 0.01 },
-  { key: 'wastePercent', label: 'Desperdício', suffix: '%', max: maximumPercentage, step: 0.1 },
-  { key: 'marginPercent', label: 'Margem desejada', suffix: '%', max: maximumPercentage, step: 0.1 },
-  { key: 'taxPercent', label: 'Impostos', suffix: '%', max: maximumPercentage, step: 0.1 },
-  { key: 'channelPercent', label: 'Taxa do canal', suffix: '%', max: maximumPercentage, step: 0.1 },
+  { key: 'laborHour', label: 'Mão de obra por hora', suffix: 'R$', max: maximumMoneyValue },
+  { key: 'fixedHour', label: 'Custo fixo por hora', suffix: 'R$', max: maximumMoneyValue },
+  { key: 'minutes', label: 'Tempo por unidade', suffix: 'min', max: maximumProductionMinutes },
+  { key: 'wastePercent', label: 'Desperdício', suffix: '%', max: maximumPercentage },
+  { key: 'marginPercent', label: 'Margem desejada', suffix: '%', max: maximumPercentage },
+  { key: 'taxPercent', label: 'Impostos', suffix: '%', max: maximumPercentage },
+  { key: 'channelPercent', label: 'Taxa do canal', suffix: '%', max: maximumPercentage },
 ];
 
 function fieldLimitMessage(
@@ -97,6 +101,21 @@ function calculationErrorMessage(error: unknown) {
     }
   }
 
+  if (error instanceof QuantityPricingError) {
+    if (error.code === 'INVALID_QUANTITY') {
+      return 'Informe uma quantidade inteira entre 1 e 100.000.';
+    }
+    if (error.code === 'A4_ITEM_DOES_NOT_FIT') {
+      return 'As dimensões informadas não cabem em uma folha A4 sem rotação.';
+    }
+    if (error.code === 'A4_MATERIAL_UNIT_INVALID') {
+      return 'O material do aproveitamento A4 precisa estar cadastrado em folhas.';
+    }
+    if (error.code === 'A4_MATERIAL_NOT_FOUND') {
+      return 'Selecione novamente o material usado no aproveitamento A4.';
+    }
+  }
+
   return 'Revise os valores informados para calcular o preço.';
 }
 
@@ -104,6 +123,7 @@ function pricingSnapshot(
   name: string,
   form: PricingFormState,
   usages: MaterialUsage[],
+  sheetUsage: { materialId: string; width: string; height: string } | null,
   legacyMaterialsCostCents: number | null,
 ) {
   return JSON.stringify({
@@ -112,8 +132,43 @@ function pricingSnapshot(
     usages: [...usages].sort((first, second) =>
       first.materialId.localeCompare(second.materialId),
     ),
+    sheetUsage,
     legacyMaterialsCostCents,
   });
+}
+
+function quantityPricingInput(
+  quantity: number,
+  form: PricingFormState,
+  materialUsages: MaterialUsage[],
+  materials: PricingMaterial[],
+  sheetUsage: PricingSheetUsage | null,
+  legacyMaterialsCostCents: number | null,
+): QuantityPricingInput {
+  return {
+    quantity,
+    materialUsages,
+    materials,
+    sheetUsage,
+    legacyMaterialsCostCentsPerUnit: legacyMaterialsCostCents,
+    laborCostPerHourCents: Math.round(form.laborHour * 100),
+    fixedCostPerHourCents: Math.round(form.fixedHour * 100),
+    productionMinutesPerUnit: Math.round(form.minutes),
+    legacyPackagingCostCentsPerUnit: Math.round(form.packaging * 100),
+    wasteBasisPoints: Math.round(form.wastePercent * 100),
+    desiredMarginBasisPoints: Math.round(form.marginPercent * 100),
+    taxBasisPoints: Math.round(form.taxPercent * 100),
+    channelFeeBasisPoints: Math.round(form.channelPercent * 100),
+    channelFixedFeeCents: 0,
+  };
+}
+
+function tryCalculateQuantityPrice(input: QuantityPricingInput) {
+  try {
+    return calculateQuantityPrice(input);
+  } catch {
+    return null;
+  }
 }
 
 export function PricingSimulator() {
@@ -125,7 +180,7 @@ export function PricingSimulator() {
       form,
       fieldInputs: pricingFieldInputsFromForm(form),
       legacyMaterialsCostCents,
-      baseline: pricingSnapshot('', form, [], legacyMaterialsCostCents),
+      baseline: pricingSnapshot('', form, [], null, legacyMaterialsCostCents),
     };
   });
   const [activeTab, setActiveTab] = useState<'simulation' | 'materials'>(
@@ -135,6 +190,9 @@ export function PricingSimulator() {
   const [fieldInputs, setFieldInputs] = useState(initialState.fieldInputs);
   const [materials, setMaterials] = useState(loadPricingMaterials);
   const [materialUsages, setMaterialUsages] = useState<MaterialUsage[]>([]);
+  const [sheetMaterialId, setSheetMaterialId] = useState('');
+  const [sheetWidthInput, setSheetWidthInput] = useState('');
+  const [sheetHeightInput, setSheetHeightInput] = useState('');
   const [legacyMaterialsCostCents, setLegacyMaterialsCostCents] = useState<
     number | null
   >(initialState.legacyMaterialsCostCents);
@@ -147,20 +205,105 @@ export function PricingSimulator() {
   const productSavingRef = useRef(false);
   const [selectorOpen, setSelectorOpen] = useState(false);
 
-  const materialsCostCents = useMemo(() => {
-    if (legacyMaterialsCostCents !== null) return legacyMaterialsCostCents;
-    try {
-      return materialUsagesCostCents(materialUsages, materials);
-    } catch {
-      return 0;
-    }
-  }, [legacyMaterialsCostCents, materialUsages, materials]);
+  const sheetUsage = useMemo<PricingSheetUsage | null>(() => {
+    if (!sheetMaterialId) return null;
+    return {
+      materialId: sheetMaterialId,
+      itemWidthCm: parseLocalizedNumber(sheetWidthInput),
+      itemHeightCm: parseLocalizedNumber(sheetHeightInput),
+    };
+  }, [sheetHeightInput, sheetMaterialId, sheetWidthInput]);
+  const deferredForm = useDeferredValue(form);
+  const referenceQuantity = parseLocalizedNumber(fieldInputs.referenceQuantity);
+  const minimumResaleQuantity = parseLocalizedNumber(
+    fieldInputs.minimumResaleQuantity,
+  );
 
+  const calculation = useMemo(() => {
+    const limitError = fieldLimitMessage(deferredForm, fieldInputs);
+    if (limitError) return { result: null, errorMessage: limitError };
+
+    try {
+      return {
+        result: calculateQuantityPrice(
+          quantityPricingInput(
+            referenceQuantity,
+            deferredForm,
+            materialUsages,
+            materials,
+            sheetUsage,
+            legacyMaterialsCostCents,
+          ),
+        ),
+        errorMessage: null,
+      };
+    } catch (error) {
+      return { result: null, errorMessage: calculationErrorMessage(error) };
+    }
+  }, [deferredForm, fieldInputs, legacyMaterialsCostCents, materialUsages, materials, referenceQuantity, sheetUsage]);
+
+  const resaleCalculation = useMemo(
+    () =>
+      tryCalculateQuantityPrice(
+        quantityPricingInput(
+          minimumResaleQuantity,
+          deferredForm,
+          materialUsages,
+          materials,
+          sheetUsage,
+          legacyMaterialsCostCents,
+        ),
+      ),
+    [
+      deferredForm,
+      legacyMaterialsCostCents,
+      materialUsages,
+      materials,
+      minimumResaleQuantity,
+      sheetUsage,
+    ],
+  );
+
+  const simulationRows = useMemo(() => {
+    const quantities = [...new Set([1, 10, 20, 50, 100, referenceQuantity])]
+      .filter(
+        (quantity) =>
+          Number.isSafeInteger(quantity) && quantity >= 1 && quantity <= 100_000,
+      )
+      .sort((first, second) => first - second);
+
+    return quantities
+      .map((quantity) =>
+        tryCalculateQuantityPrice(
+          quantityPricingInput(
+            quantity,
+            deferredForm,
+            materialUsages,
+            materials,
+            sheetUsage,
+            legacyMaterialsCostCents,
+          ),
+        ),
+      )
+      .filter((row): row is QuantityPricingBreakdown => row !== null);
+  }, [
+    deferredForm,
+    legacyMaterialsCostCents,
+    materialUsages,
+    materials,
+    referenceQuantity,
+    sheetUsage,
+  ]);
+
+  const materialsCostCents = calculation.result
+    ? Math.round(
+        calculation.result.materialsCostCents / calculation.result.quantity,
+      )
+    : legacyMaterialsCostCents ?? Math.round(form.materials * 100);
   const effectiveForm = useMemo(
     () => ({ ...form, materials: materialsCostCents / 100 }),
     [form, materialsCostCents],
   );
-  const deferredEffectiveForm = useDeferredValue(effectiveForm);
 
   useEffect(() => {
     const persistenceTimer = window.setTimeout(
@@ -175,34 +318,11 @@ export function PricingSimulator() {
       productName,
       effectiveForm,
       materialUsages,
+      sheetMaterialId
+        ? { materialId: sheetMaterialId, width: sheetWidthInput, height: sheetHeightInput }
+        : null,
       legacyMaterialsCostCents,
     ) !== baseline;
-
-  const calculation = useMemo(() => {
-    const limitError = fieldLimitMessage(deferredEffectiveForm, fieldInputs);
-    if (limitError) return { result: null, errorMessage: limitError };
-
-    try {
-      return {
-        result: calculatePrice({
-          materialsCostCents,
-          laborCostPerHourCents: Math.round(deferredEffectiveForm.laborHour * 100),
-          fixedCostPerHourCents: Math.round(deferredEffectiveForm.fixedHour * 100),
-          productionMinutes: Math.round(deferredEffectiveForm.minutes),
-          packagingCostCents: Math.round(deferredEffectiveForm.packaging * 100),
-          depreciationCostCents: 0,
-          wasteBasisPoints: Math.round(deferredEffectiveForm.wastePercent * 100),
-          desiredMarginBasisPoints: Math.round(deferredEffectiveForm.marginPercent * 100),
-          taxBasisPoints: Math.round(deferredEffectiveForm.taxPercent * 100),
-          channelFeeBasisPoints: Math.round(deferredEffectiveForm.channelPercent * 100),
-          channelFixedFeeCents: 0,
-        }),
-        errorMessage: null,
-      };
-    } catch (error) {
-      return { result: null, errorMessage: calculationErrorMessage(error) };
-    }
-  }, [deferredEffectiveForm, fieldInputs, materialsCostCents]);
 
   function confirmDiscardChanges() {
     return (
@@ -225,6 +345,27 @@ export function PricingSimulator() {
     setProductFeedback('');
   }
 
+  function materialCostPerUnitFor(
+    usages: MaterialUsage[],
+    catalog: PricingMaterial[],
+    selectedSheet: PricingSheetUsage | null,
+    quantity = form.referenceQuantity,
+  ) {
+    try {
+      return Math.round(
+        calculateQuantityMaterials({
+          quantity,
+          materialUsages: usages,
+          materials: catalog,
+          sheetUsage: selectedSheet,
+          legacyMaterialsCostCentsPerUnit: null,
+        }).materialsCostCents / quantity,
+      );
+    } catch {
+      return 0;
+    }
+  }
+
   function selectProductDraft(id: string) {
     if (id === activeProductId) return;
     if (!confirmDiscardChanges()) return;
@@ -232,15 +373,25 @@ export function PricingSimulator() {
     setProductFeedback('');
     const selected = productDrafts.find((draft) => draft.id === id);
     if (!selected) {
-      const nextForm = { ...effectiveForm, materials: 0 };
+      const nextForm = {
+        ...effectiveForm,
+        materials: 0,
+        packaging: 0,
+        referenceQuantity: 1,
+        minimumResaleQuantity: 10,
+        commercialUnit: 'unidade' as const,
+      };
       setActiveProductId('');
       setProductName('');
       setForm(nextForm);
       setFieldInputs(pricingFieldInputsFromForm(nextForm));
       setMaterialUsages([]);
+      setSheetMaterialId('');
+      setSheetWidthInput('');
+      setSheetHeightInput('');
       setLegacyMaterialsCostCents(null);
       persistPricingDraft(nextForm);
-      setBaseline(pricingSnapshot('', nextForm, [], null));
+      setBaseline(pricingSnapshot('', nextForm, [], null, null));
       return;
     }
 
@@ -249,6 +400,13 @@ export function PricingSimulator() {
     setForm({ ...selected.form });
     setFieldInputs(pricingFieldInputsFromForm(selected.form));
     setMaterialUsages([...selected.materialUsages]);
+    setSheetMaterialId(selected.sheetUsage?.materialId ?? '');
+    setSheetWidthInput(
+      selected.sheetUsage ? decimalInputValue(selected.sheetUsage.itemWidthCm) : '',
+    );
+    setSheetHeightInput(
+      selected.sheetUsage ? decimalInputValue(selected.sheetUsage.itemHeightCm) : '',
+    );
     setLegacyMaterialsCostCents(selected.legacyMaterialsCostCents);
     persistPricingDraft(selected.form);
     setBaseline(
@@ -256,6 +414,13 @@ export function PricingSimulator() {
         selected.name,
         selected.form,
         selected.materialUsages,
+        selected.sheetUsage
+          ? {
+              materialId: selected.sheetUsage.materialId,
+              width: decimalInputValue(selected.sheetUsage.itemWidthCm),
+              height: decimalInputValue(selected.sheetUsage.itemHeightCm),
+            }
+          : null,
         selected.legacyMaterialsCostCents,
       ),
     );
@@ -263,15 +428,25 @@ export function PricingSimulator() {
 
   function startNewProduct() {
     if (!confirmDiscardChanges()) return;
-    const nextForm = { ...effectiveForm, materials: 0 };
+    const nextForm = {
+      ...effectiveForm,
+      materials: 0,
+      packaging: 0,
+      referenceQuantity: 1,
+      minimumResaleQuantity: 10,
+      commercialUnit: 'unidade' as const,
+    };
     setActiveProductId('');
     setProductName('');
     setForm(nextForm);
     setFieldInputs(pricingFieldInputsFromForm(nextForm));
     setMaterialUsages([]);
+    setSheetMaterialId('');
+    setSheetWidthInput('');
+    setSheetHeightInput('');
     setLegacyMaterialsCostCents(null);
     persistPricingDraft(nextForm);
-    setBaseline(pricingSnapshot('', nextForm, [], null));
+    setBaseline(pricingSnapshot('', nextForm, [], null, null));
     setProductFeedback(
       'Informe o nome, selecione os materiais e salve como um novo produto.',
     );
@@ -282,6 +457,17 @@ export function PricingSimulator() {
     const normalizedName = productName.trim();
     if (!normalizedName) {
       setProductFeedback('Informe o nome do produto antes de salvar.');
+      return;
+    }
+
+    if (
+      !Number.isSafeInteger(minimumResaleQuantity) ||
+      minimumResaleQuantity < 1 ||
+      minimumResaleQuantity > 100_000
+    ) {
+      setProductFeedback(
+        'Informe uma quantidade mínima para revenda entre 1 e 100.000.',
+      );
       return;
     }
 
@@ -299,6 +485,7 @@ export function PricingSimulator() {
         name: normalizedName,
         form: savedForm,
         materialUsages,
+        sheetUsage,
         legacyMaterialsCostCents,
       });
       const saved = nextDrafts[0];
@@ -329,6 +516,13 @@ export function PricingSimulator() {
           saved.name,
           saved.form,
           saved.materialUsages,
+          saved.sheetUsage
+            ? {
+                materialId: saved.sheetUsage.materialId,
+                width: decimalInputValue(saved.sheetUsage.itemWidthCm),
+                height: decimalInputValue(saved.sheetUsage.itemHeightCm),
+              }
+            : null,
           saved.legacyMaterialsCostCents,
         ),
       );
@@ -362,9 +556,10 @@ export function PricingSimulator() {
       setProductDrafts(refreshedDrafts);
 
       if (legacyMaterialsCostCents === null) {
-        const nextCost = materialUsagesCostCents(
+        const nextCost = materialCostPerUnitFor(
           materialUsages,
           nextMaterials,
+          sheetUsage,
         );
         setForm((current) => {
           const next = { ...current, materials: nextCost / 100 };
@@ -377,6 +572,9 @@ export function PricingSimulator() {
               productName,
               { ...form, materials: nextCost / 100 },
               materialUsages,
+              sheetMaterialId
+                ? { materialId: sheetMaterialId, width: sheetWidthInput, height: sheetHeightInput }
+                : null,
               null,
             ),
           );
@@ -406,7 +604,7 @@ export function PricingSimulator() {
 
   function confirmMaterialSelection(usages: MaterialUsage[]) {
     try {
-      const nextCost = materialUsagesCostCents(usages, materials);
+      const nextCost = materialCostPerUnitFor(usages, materials, sheetUsage);
       const nextForm = { ...form, materials: nextCost / 100 };
       setMaterialUsages(usages);
       setLegacyMaterialsCostCents(null);
@@ -433,6 +631,12 @@ export function PricingSimulator() {
       setProductFeedback('Não foi possível aplicar os materiais selecionados.');
     }
   }
+
+  const sheetMaterials = materials.filter(
+    (material) =>
+      material.measurementUnit === 'folha' &&
+      (!material.archived || material.id === sheetMaterialId),
+  );
 
   return (
     <div>
@@ -462,7 +666,7 @@ export function PricingSimulator() {
           onChange={changeMaterialsCatalog}
         />
       ) : (
-        <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="grid gap-5 2xl:grid-cols-[minmax(0,1fr)_360px]">
           <section className="rounded-3xl border border-[#ded2c5] bg-white p-5 shadow-[0_8px_24px_rgb(76_53_42/5%)] sm:p-6">
             <div className="flex flex-col gap-3 border-b border-[#eee4da] pb-5 sm:flex-row sm:items-center sm:justify-between">
               <div>
@@ -475,13 +679,13 @@ export function PricingSimulator() {
             <section aria-label="Produto da simulação" className="mt-5 rounded-2xl border border-[#e2d6ca] bg-[#f8f3ed] p-4">
               <div className="grid gap-3 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)_auto] lg:items-end">
                 <label className="block">
-                  <span className="mb-1.5 block text-xs font-bold text-[#665147]">Simulações salvas</span>
+                  <span className="mb-1.5 block text-xs font-bold text-[#665147]">Precificações salvas</span>
                   <select
                     className="w-full rounded-xl border border-[#d9cabc] bg-white px-3 py-3 text-sm font-semibold outline-none focus:border-[#b8860b] focus:ring-3 focus:ring-[#c69a45]/15"
                     onChange={(event) => selectProductDraft(event.target.value)}
                     value={activeProductId}
                   >
-                    <option value="">Novo produto</option>
+                    <option value="">Nova precificação</option>
                     {productDrafts.map((draft) => (
                       <option key={draft.id} value={draft.id}>{draft.name}</option>
                     ))}
@@ -489,7 +693,7 @@ export function PricingSimulator() {
                 </label>
 
                 <label className="block">
-                  <span className="mb-1.5 block text-xs font-bold text-[#665147]">Nome do produto</span>
+                  <span className="mb-1.5 block text-xs font-bold text-[#665147]">Nome da precificação</span>
                   <input
                     className="w-full rounded-xl border border-[#d9cabc] bg-white px-3 py-3 text-sm font-semibold outline-none focus:border-[#b8860b] focus:ring-3 focus:ring-[#c69a45]/15"
                     maxLength={80}
@@ -509,10 +713,53 @@ export function PricingSimulator() {
                     {productSaving
                       ? 'Salvando...'
                       : activeProductId
-                        ? 'Atualizar'
-                        : 'Salvar produto'}
+                        ? 'Atualizar precificação'
+                        : 'Salvar precificação'}
                   </button>
                 </div>
+              </div>
+              <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                <label className="block">
+                  <span className="mb-1.5 block text-xs font-bold text-[#665147]">Quantidade analisada</span>
+                  <input
+                    aria-label="Quantidade analisada"
+                    className="w-full rounded-xl border border-[#d9cabc] bg-white px-3 py-3 text-right text-sm font-semibold outline-none focus:border-[#b8860b] focus:ring-3 focus:ring-[#c69a45]/15"
+                    inputMode="numeric"
+                    onChange={(event) => updateField('referenceQuantity', event.target.value)}
+                    type="text"
+                    value={fieldInputs.referenceQuantity}
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-1.5 block text-xs font-bold text-[#665147]">Unidade comercial</span>
+                  <select
+                    aria-label="Unidade comercial"
+                    className="w-full rounded-xl border border-[#d9cabc] bg-white px-3 py-3 text-sm font-semibold outline-none focus:border-[#b8860b] focus:ring-3 focus:ring-[#c69a45]/15"
+                    onChange={(event) => {
+                      setForm((current) => ({
+                        ...current,
+                        commercialUnit: event.target.value as PricingFormState['commercialUnit'],
+                      }));
+                      setProductFeedback('');
+                    }}
+                    value={form.commercialUnit}
+                  >
+                    {commercialUnits.map((unit) => (
+                      <option key={unit} value={unit}>{commercialUnitLabels[unit]}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="mb-1.5 block text-xs font-bold text-[#665147]">Quantidade mínima para revenda</span>
+                  <input
+                    aria-label="Quantidade mínima para revenda"
+                    className="w-full rounded-xl border border-[#d9cabc] bg-white px-3 py-3 text-right text-sm font-semibold outline-none focus:border-[#b8860b] focus:ring-3 focus:ring-[#c69a45]/15"
+                    inputMode="numeric"
+                    onChange={(event) => updateField('minimumResaleQuantity', event.target.value)}
+                    type="text"
+                    value={fieldInputs.minimumResaleQuantity}
+                  />
+                </label>
               </div>
               <div className="mt-3 flex flex-col gap-1 text-xs text-[#806b60] sm:flex-row sm:items-center sm:justify-between">
                 <p role="status">{productFeedback || (hasUnsavedChanges ? 'Existem alterações não salvas neste produto.' : 'Cada produto mantém seus próprios custos, materiais e margem.')}</p>
@@ -523,7 +770,7 @@ export function PricingSimulator() {
             <section className="mt-5 rounded-2xl border border-[#e2d6ca] bg-[#fcfaf7] p-4">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <p className="text-xs font-bold text-[#665147]">Materiais por peça</p>
+                  <p className="text-xs font-bold text-[#665147]">Materiais por unidade</p>
                   <p className="mt-1 text-sm text-[#806b60]">
                     {legacyMaterialsCostCents !== null
                       ? 'Custo manual de uma versão anterior. Converta para vincular materiais.'
@@ -557,7 +804,10 @@ export function PricingSimulator() {
                       <div className="rounded-xl border border-[#e2d6ca] bg-white px-3 py-2.5" key={usage.materialId}>
                         <p className="truncate text-xs font-bold text-[#4b3027]">{material.description}</p>
                         <p className="mt-1 text-xs text-[#806b60]">
-                          {new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 4 }).format(usage.usedQuantity)} {measurementUnitLabels[material.measurementUnit]} · {money.format(materialUsageCostCents(material, usage.usedQuantity) / 100)}
+                          {new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 4 }).format(usage.usedQuantity)} {measurementUnitLabels[material.measurementUnit]}
+                          {usage.materialId === sheetMaterialId
+                            ? ' · custo calculado pelo aproveitamento A4'
+                            : ` · ${money.format(materialUsageCostCents(material, usage.usedQuantity) / 100)}`}
                         </p>
                       </div>
                     );
@@ -565,6 +815,104 @@ export function PricingSimulator() {
                 </div>
               )}
             </section>
+
+            <section className="mt-4 rounded-2xl border border-[#e2d6ca] bg-[#fcfaf7] p-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-xs font-bold text-[#665147]">Aproveitamento em folha A4</p>
+                  <p className="mt-1 text-sm text-[#806b60]">Informe o tamanho final de uma unidade. O sistema calcula quantas cabem em 21 × 29,7 cm, sem rotação.</p>
+                </div>
+                <button
+                  aria-pressed={Boolean(sheetMaterialId)}
+                  className={`rounded-xl border px-4 py-2.5 text-sm font-bold disabled:cursor-not-allowed disabled:opacity-50 ${sheetMaterialId ? 'border-[#5c3d2e] bg-[#5c3d2e] text-white' : 'border-[#c7ab8f] bg-white text-[#6d4a39]'}`}
+                  disabled={!sheetMaterialId && sheetMaterials.length === 0}
+                  onClick={() => {
+                    if (sheetMaterialId) {
+                      setSheetMaterialId('');
+                      setSheetWidthInput('');
+                      setSheetHeightInput('');
+                    } else {
+                      setSheetMaterialId(sheetMaterials[0]?.id ?? '');
+                    }
+                    setProductFeedback('');
+                  }}
+                  type="button"
+                >
+                  {sheetMaterialId ? 'Desativar A4' : 'Usar aproveitamento A4'}
+                </button>
+              </div>
+
+              {sheetMaterialId && (
+                <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                  <label className="block">
+                    <span className="mb-1.5 block text-xs font-bold text-[#665147]">Papel em folhas</span>
+                    <select
+                      aria-label="Papel em folhas"
+                      className="w-full rounded-xl border border-[#d9cabc] bg-white px-3 py-3 text-sm font-semibold outline-none focus:border-[#b8860b]"
+                      onChange={(event) => setSheetMaterialId(event.target.value)}
+                      value={sheetMaterialId}
+                    >
+                      {sheetMaterials.map((material) => (
+                        <option key={material.id} value={material.id}>{material.description}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="block">
+                    <span className="mb-1.5 block text-xs font-bold text-[#665147]">Largura da unidade (cm)</span>
+                    <input
+                      aria-label="Largura da unidade em centímetros"
+                      className="w-full rounded-xl border border-[#d9cabc] bg-white px-3 py-3 text-right text-sm font-semibold outline-none focus:border-[#b8860b]"
+                      inputMode="decimal"
+                      onChange={(event) => setSheetWidthInput(event.target.value)}
+                      placeholder="Ex.: 10"
+                      type="text"
+                      value={sheetWidthInput}
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="mb-1.5 block text-xs font-bold text-[#665147]">Altura da unidade (cm)</span>
+                    <input
+                      aria-label="Altura da unidade em centímetros"
+                      className="w-full rounded-xl border border-[#d9cabc] bg-white px-3 py-3 text-right text-sm font-semibold outline-none focus:border-[#b8860b]"
+                      inputMode="decimal"
+                      onChange={(event) => setSheetHeightInput(event.target.value)}
+                      placeholder="Ex.: 10"
+                      type="text"
+                      value={sheetHeightInput}
+                    />
+                  </label>
+                  {calculation.result?.unitsPerSheet && (
+                    <div className="sm:col-span-3 rounded-xl bg-[#f4eee7] px-3 py-2 text-sm text-[#6d5448]">
+                      <strong>{calculation.result.unitsPerSheet} por folha</strong> · {calculation.result.sheetsNeeded} {calculation.result.sheetsNeeded === 1 ? 'folha necessária' : 'folhas necessárias'} · {money.format(calculation.result.sheetCostCents / 100)} em papel
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {!sheetMaterialId && sheetMaterials.length === 0 && (
+                <p className="mt-3 text-xs text-[#8a6d5e]">Cadastre primeiro um material com unidade “Folha” na aba Materiais de uso.</p>
+              )}
+            </section>
+
+            {form.packaging > 0 && (
+              <section className="mt-4 flex flex-col gap-3 rounded-2xl border border-amber-300 bg-amber-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-sm font-bold text-amber-950">Custo legado de embalagem: {money.format(form.packaging)}</p>
+                  <p className="mt-1 text-xs text-amber-900">Este valor antigo foi preservado. Nas novas precificações, cadastre a embalagem como material.</p>
+                </div>
+                <button
+                  className="rounded-xl border border-amber-400 bg-white px-4 py-2 text-sm font-bold text-amber-950"
+                  onClick={() => {
+                    setForm((current) => ({ ...current, packaging: 0 }));
+                    setFieldInputs((current) => ({ ...current, packaging: '0' }));
+                    setProductFeedback('Custo legado removido. Salve a precificação para confirmar.');
+                  }}
+                  type="button"
+                >
+                  Remover custo legado
+                </button>
+              </section>
+            )}
 
             <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {fields.map((field) => (
@@ -585,6 +933,54 @@ export function PricingSimulator() {
               ))}
             </div>
 
+            <section className="mt-6 rounded-2xl border border-[#e2d6ca] bg-white p-4">
+              <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                  <p className="text-sm font-bold text-[#4b3027]">Simulação por quantidade</p>
+                  <p className="mt-1 text-xs text-[#806b60]">Compare as quantidades padrão e a quantidade analisada acima.</p>
+                </div>
+                {resaleCalculation && (
+                  <p className="text-xs text-[#6d5448]">
+                    Revenda a partir de <strong>{resaleCalculation.quantity}</strong>: <strong>{money.format(resaleCalculation.suggestedUnitPriceCents / 100)} por {commercialUnitLabels[form.commercialUnit].toLocaleLowerCase('pt-BR')}</strong>
+                  </p>
+                )}
+              </div>
+              <div className="mt-4 overflow-x-auto rounded-xl border border-[#eadfd4]">
+                <table className="min-w-[850px] w-full border-collapse text-right text-xs">
+                  <thead className="bg-[#f4eee7] text-[#6d5448]">
+                    <tr>
+                      <th className="px-3 py-3 text-left">Quantidade</th>
+                      <th className="px-3 py-3">Custo total</th>
+                      <th className="px-3 py-3">Custo unitário</th>
+                      <th className="px-3 py-3">Preço mínimo/un.</th>
+                      <th className="px-3 py-3">Preço sugerido/un.</th>
+                      <th className="px-3 py-3">Venda total</th>
+                      <th className="px-3 py-3">Lucro total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {simulationRows.map((row) => (
+                      <tr
+                        className={`border-t border-[#eee4da] ${row.quantity === referenceQuantity ? 'bg-[#fff8e8]' : 'bg-white'}`}
+                        key={row.quantity}
+                      >
+                        <th className="px-3 py-3 text-left font-bold text-[#4b3027]">
+                          {row.quantity}
+                          {row.quantity === referenceQuantity && <span className="ml-2 rounded-full bg-[#c99a3d] px-2 py-0.5 text-[10px] text-white">analisada</span>}
+                        </th>
+                        <td className="px-3 py-3">{money.format(row.productionCostCents / 100)}</td>
+                        <td className="px-3 py-3">{money.format(row.unitProductionCostCents / 100)}</td>
+                        <td className="px-3 py-3">{money.format(row.minimumUnitPriceCents / 100)}</td>
+                        <td className="px-3 py-3 font-bold text-[#5c3d2e]">{money.format(row.suggestedUnitPriceCents / 100)}</td>
+                        <td className="px-3 py-3">{money.format(row.saleTotalCents / 100)}</td>
+                        <td className="px-3 py-3 font-bold text-[#8a650c]">{money.format(row.estimatedProfitCents / 100)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
             <div className="mt-6 rounded-2xl border border-[#e2d6ca] bg-[#f8f3ed] p-4">
               <p className="text-xs font-bold uppercase tracking-[0.14em] text-[#9a6f57]">Regra aplicada</p>
               <p className="mt-2 text-sm leading-6 text-[#6f5a4f]">Custo total dividido por 1 menos margem, impostos e taxas percentuais. Os materiais são calculados pela quantidade usada em cada peça.</p>
@@ -595,25 +991,33 @@ export function PricingSimulator() {
             <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#d7b56f]">Preço sugerido</p>
             {calculation.result ? (
               <>
-                <p className="mt-3 max-w-full break-all text-[clamp(1.75rem,3vw,2.25rem)] font-black leading-tight tracking-tight">{money.format(calculation.result.suggestedPriceCents / 100)}</p>
-                <p className="mt-2 text-sm text-[#e0d0c6]">por peça, com a margem e taxas informadas</p>
+                <p className="mt-3 max-w-full break-all text-[clamp(1.75rem,3vw,2.25rem)] font-black leading-tight tracking-tight">{money.format(calculation.result.suggestedUnitPriceCents / 100)}</p>
+                <p className="mt-2 text-sm text-[#e0d0c6]">por {commercialUnitLabels[form.commercialUnit].toLocaleLowerCase('pt-BR')}, para {calculation.result.quantity} {calculation.result.quantity === 1 ? 'unidade' : 'unidades'}</p>
 
                 <dl className="mt-7 space-y-3 border-t border-white/15 pt-5 text-sm">
                   <div className="flex justify-between gap-4">
-                    <dt className="min-w-0 text-[#d8c6ba]">Custo de produção</dt>
+                    <dt className="min-w-0 text-[#d8c6ba]">Custo total</dt>
                     <dd className="min-w-0 max-w-[58%] break-all text-right font-bold">{money.format(calculation.result.productionCostCents / 100)}</dd>
                   </div>
                   <div className="flex justify-between gap-4">
-                    <dt className="min-w-0 text-[#d8c6ba]">Impostos estimados</dt>
-                    <dd className="min-w-0 max-w-[58%] break-all text-right font-bold">{money.format(calculation.result.estimatedTaxCents / 100)}</dd>
+                    <dt className="min-w-0 text-[#d8c6ba]">Custo por unidade</dt>
+                    <dd className="min-w-0 max-w-[58%] break-all text-right font-bold">{money.format(calculation.result.unitProductionCostCents / 100)}</dd>
                   </div>
                   <div className="flex justify-between gap-4">
-                    <dt className="min-w-0 text-[#d8c6ba]">Taxa do canal</dt>
-                    <dd className="min-w-0 max-w-[58%] break-all text-right font-bold">{money.format(calculation.result.estimatedChannelFeeCents / 100)}</dd>
+                    <dt className="min-w-0 text-[#d8c6ba]">Preço mínimo/un.</dt>
+                    <dd className="min-w-0 max-w-[58%] break-all text-right font-bold">{money.format(calculation.result.minimumUnitPriceCents / 100)}</dd>
+                  </div>
+                  <div className="flex justify-between gap-4">
+                    <dt className="min-w-0 text-[#d8c6ba]">Venda total</dt>
+                    <dd className="min-w-0 max-w-[58%] break-all text-right font-bold">{money.format(calculation.result.saleTotalCents / 100)}</dd>
                   </div>
                   <div className="flex justify-between gap-4 border-t border-white/15 pt-3">
-                    <dt className="min-w-0 text-[#d8c6ba]">Lucro estimado</dt>
+                    <dt className="min-w-0 text-[#d8c6ba]">Lucro total</dt>
                     <dd className="min-w-0 max-w-[58%] break-all text-right font-bold text-[#e2c479]">{money.format(calculation.result.estimatedProfitCents / 100)}</dd>
+                  </div>
+                  <div className="flex justify-between gap-4">
+                    <dt className="min-w-0 text-[#d8c6ba]">Lucro por unidade</dt>
+                    <dd className="min-w-0 max-w-[58%] break-all text-right font-bold text-[#e2c479]">{money.format(calculation.result.unitProfitCents / 100)}</dd>
                   </div>
                 </dl>
               </>

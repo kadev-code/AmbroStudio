@@ -23,9 +23,9 @@ describe('calculatePrice', () => {
   it('calcula o preço usando margem sobre a venda', () => {
     const result = calculatePrice(baseInput);
 
-    expect(result.productionCostCents).toBe(2790);
-    expect(result.suggestedPriceCents).toBe(5694);
-    expect(result.estimatedProfitCents).toBeGreaterThanOrEqual(2276);
+    expect(result.productionCostCents).toBe(2880);
+    expect(result.suggestedPriceCents).toBe(5878);
+    expect(result.estimatedProfitCents).toBeGreaterThanOrEqual(2351);
     expect(result.achievedMarginBasisPoints).toBeGreaterThanOrEqual(3998);
   });
 

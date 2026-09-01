@@ -3,6 +3,14 @@ import { decimalInputValue, parseLocalizedNumber } from './pricing-format';
 
 export const PRICING_DRAFT_STORAGE_KEY = 'ambro-studio:pricing-draft:v1';
 
+export const commercialUnits = ['unidade', 'kit', 'folha'] as const;
+
+export const commercialUnitLabels: Record<(typeof commercialUnits)[number], string> = {
+  unidade: 'Unidade',
+  kit: 'Kit',
+  folha: 'Folha',
+};
+
 export const pricingFormSchema = z
   .object({
     materials: z.number().finite().nonnegative(),
@@ -14,6 +22,9 @@ export const pricingFormSchema = z
     marginPercent: z.number().finite().nonnegative(),
     taxPercent: z.number().finite().nonnegative(),
     channelPercent: z.number().finite().nonnegative(),
+    referenceQuantity: z.number().int().positive().max(100_000).default(1),
+    minimumResaleQuantity: z.number().int().positive().max(100_000).default(10),
+    commercialUnit: z.enum(commercialUnits).default('unidade'),
   })
   .strict();
 
@@ -28,6 +39,8 @@ export const pricingEditableFieldKeys = [
   'marginPercent',
   'taxPercent',
   'channelPercent',
+  'referenceQuantity',
+  'minimumResaleQuantity',
 ] as const;
 
 export type PricingEditableField = (typeof pricingEditableFieldKeys)[number];
@@ -39,11 +52,14 @@ export const DEFAULT_PRICING_FORM: PricingFormState = {
   laborHour: 24,
   fixedHour: 12,
   minutes: 30,
-  packaging: 1,
+  packaging: 0,
   wastePercent: 5,
   marginPercent: 40,
   taxPercent: 6,
   channelPercent: 5,
+  referenceQuantity: 1,
+  minimumResaleQuantity: 10,
+  commercialUnit: 'unidade',
 };
 
 export function pricingFieldInputsFromForm(
@@ -65,9 +81,17 @@ export function updatePricingFormFromInput(
   key: PricingEditableField,
   value: string,
 ) {
+  const numericValue = pricingNumberFromInput(value);
+  if (
+    (key === 'referenceQuantity' || key === 'minimumResaleQuantity') &&
+    (!Number.isInteger(numericValue) || numericValue < 1 || numericValue > 100_000)
+  ) {
+    return form;
+  }
+
   return pricingFormSchema.parse({
     ...form,
-    [key]: pricingNumberFromInput(value),
+    [key]: numericValue,
   });
 }
 

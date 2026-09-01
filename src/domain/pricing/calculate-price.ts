@@ -68,15 +68,15 @@ export function calculatePrice(input: PricingInput): PricingBreakdown {
     throw new PricingCalculationError('INVALID_PERCENTAGE_TOTAL');
   }
 
-  const wasteCostCents = percentageOf(
-    input.materialsCostCents,
-    input.wasteBasisPoints,
-  );
   const laborCostCents = Math.round(
     (input.laborCostPerHourCents * input.productionMinutes) / 60,
   );
   const allocatedFixedCostCents = Math.round(
     (input.fixedCostPerHourCents * input.productionMinutes) / 60,
+  );
+  const wasteCostCents = percentageOf(
+    input.materialsCostCents + laborCostCents + allocatedFixedCostCents,
+    input.wasteBasisPoints,
   );
 
   const productionCostCents =

@@ -1,7 +1,5 @@
 import { z } from 'zod';
-import { calculatePrice } from '../../domain/pricing/calculate-price';
 import {
-  materialUsagesCostCents,
   materialUsagesSchema,
   pricingMaterialsSchema,
   type MaterialUsage,
@@ -14,6 +12,12 @@ import {
 } from '../../infrastructure/persistence/document-storage';
 import { PRICING_MATERIALS_STORAGE_KEY } from '../../infrastructure/pricing/local-material-catalog-repository';
 import { pricingFormSchema, type PricingFormState } from './pricing-form-state';
+import {
+  calculateQuantityPrice,
+  calculateQuantityMaterials,
+  pricingSheetUsageSchema,
+  type PricingSheetUsage,
+} from '../../domain/pricing/quantity-pricing';
 
 export const PRICING_PRODUCTS_STORAGE_KEY =
   'ambro-studio:pricing-product-drafts:v1';
@@ -24,6 +28,7 @@ export const pricingProductDraftSchema = z
     name: z.string().trim().min(1).max(80),
     form: pricingFormSchema,
     materialUsages: materialUsagesSchema.default([]),
+    sheetUsage: pricingSheetUsageSchema.nullable().default(null),
     legacyMaterialsCostCents: z
       .number()
       .int()
@@ -118,6 +123,7 @@ export function savePricingProductDraft(
     name: string;
     form: PricingFormState;
     materialUsages?: MaterialUsage[];
+    sheetUsage?: PricingSheetUsage | null;
     legacyMaterialsCostCents?: number | null;
     updatedAt?: string;
   },
@@ -127,6 +133,7 @@ export function savePricingProductDraft(
     name: input.name,
     form: input.form,
     materialUsages: input.materialUsages ?? [],
+    sheetUsage: input.sheetUsage ?? null,
     legacyMaterialsCostCents: input.legacyMaterialsCostCents ?? null,
     updatedAt: input.updatedAt ?? new Date().toISOString(),
   });
@@ -140,14 +147,22 @@ export function savePricingProductDraft(
 export function pricingProductMaterialsCostCents(
   draft: Pick<
     PricingProductDraft,
-    'form' | 'materialUsages' | 'legacyMaterialsCostCents'
+    'form' | 'materialUsages' | 'sheetUsage' | 'legacyMaterialsCostCents'
   >,
   materials: PricingMaterial[],
 ) {
   if (draft.legacyMaterialsCostCents !== null) {
     return draft.legacyMaterialsCostCents;
   }
-  return materialUsagesCostCents(draft.materialUsages, materials);
+  return Math.round(
+    calculateQuantityMaterials({
+      quantity: draft.form.referenceQuantity,
+      materialUsages: draft.materialUsages,
+      materials,
+      sheetUsage: draft.sheetUsage,
+      legacyMaterialsCostCentsPerUnit: null,
+    }).materialsCostCents / draft.form.referenceQuantity,
+  );
 }
 
 export function refreshPricingProductMaterialCosts(
@@ -157,10 +172,7 @@ export function refreshPricingProductMaterialCosts(
   return drafts.map((draft) => {
     if (draft.legacyMaterialsCostCents !== null) return draft;
     try {
-      const materialsCostCents = pricingProductMaterialsCostCents(
-        draft,
-        materials,
-      );
+      const materialsCostCents = pricingProductMaterialsCostCents(draft, materials);
       return pricingProductDraftSchema.parse({
         ...draft,
         form: { ...draft.form, materials: materialsCostCents / 100 },
@@ -177,19 +189,22 @@ export function suggestedPriceForProductDraft(
   if (!draft) return null;
 
   try {
-    return calculatePrice({
-      materialsCostCents: Math.round(draft.form.materials * 100),
+    return calculateQuantityPrice({
+      quantity: draft.form.referenceQuantity,
+      materialUsages: [],
+      materials: [],
+      sheetUsage: null,
+      legacyMaterialsCostCentsPerUnit: Math.round(draft.form.materials * 100),
       laborCostPerHourCents: Math.round(draft.form.laborHour * 100),
       fixedCostPerHourCents: Math.round(draft.form.fixedHour * 100),
-      productionMinutes: Math.round(draft.form.minutes),
-      packagingCostCents: Math.round(draft.form.packaging * 100),
-      depreciationCostCents: 0,
+      productionMinutesPerUnit: Math.round(draft.form.minutes),
+      legacyPackagingCostCentsPerUnit: Math.round(draft.form.packaging * 100),
       wasteBasisPoints: Math.round(draft.form.wastePercent * 100),
       desiredMarginBasisPoints: Math.round(draft.form.marginPercent * 100),
       taxBasisPoints: Math.round(draft.form.taxPercent * 100),
       channelFeeBasisPoints: Math.round(draft.form.channelPercent * 100),
       channelFixedFeeCents: 0,
-    }).suggestedPriceCents;
+    }).suggestedUnitPriceCents;
   } catch {
     return null;
   }

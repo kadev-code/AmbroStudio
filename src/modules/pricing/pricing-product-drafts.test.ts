@@ -38,14 +38,31 @@ describe('pricing product drafts', () => {
       {
         id: 'ef790ce3-90b6-4e0f-b349-baa6f15025b7',
         name: 'Kit festa antigo',
-        form: { ...DEFAULT_PRICING_FORM, materials: 18.5 },
+        form: {
+          materials: 18.5,
+          laborHour: 24,
+          fixedHour: 12,
+          minutes: 30,
+          packaging: 1,
+          wastePercent: 5,
+          marginPercent: 40,
+          taxPercent: 6,
+          channelPercent: 5,
+        },
         updatedAt: '2026-08-25T10:00:00.000Z',
       },
     ]);
 
     const [draft] = parsePricingProductDrafts(legacy);
     expect(draft.materialUsages).toEqual([]);
+    expect(draft.sheetUsage).toBeNull();
     expect(draft.legacyMaterialsCostCents).toBe(1_850);
+    expect(draft.form).toMatchObject({
+      referenceQuantity: 1,
+      minimumResaleQuantity: 10,
+      commercialUnit: 'unidade',
+      packaging: 1,
+    });
   });
 
   it('mantém uma receita diferente por produto e atualiza seu custo', () => {
@@ -86,6 +103,31 @@ describe('pricing product drafts', () => {
       updatedAt: '2026-08-25T10:00:00.000Z',
     });
 
-    expect(suggestedPriceForProductDraft(drafts[0])).toBe(5592);
+    expect(suggestedPriceForProductDraft(drafts[0])).toBe(5572);
+  });
+
+  it('salva e restaura quantidade, unidade comercial e configuração A4', () => {
+    const drafts = savePricingProductDraft([], {
+      id: 'ef790ce3-90b6-4e0f-b349-baa6f15025b7',
+      name: 'Tag A4',
+      form: {
+        ...DEFAULT_PRICING_FORM,
+        referenceQuantity: 50,
+        minimumResaleQuantity: 20,
+        commercialUnit: 'kit',
+      },
+      sheetUsage: {
+        materialId: '03c9eaa2-56db-4415-8c12-8e40d38f791c',
+        itemWidthCm: 10,
+        itemHeightCm: 10,
+      },
+      updatedAt: '2026-09-01T10:00:00.000Z',
+    });
+
+    const [restored] = parsePricingProductDrafts(JSON.stringify(drafts));
+    expect(restored.form.referenceQuantity).toBe(50);
+    expect(restored.form.minimumResaleQuantity).toBe(20);
+    expect(restored.form.commercialUnit).toBe('kit');
+    expect(restored.sheetUsage).toEqual(drafts[0].sheetUsage);
   });
 });

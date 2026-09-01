@@ -56,4 +56,35 @@ describe('pricing form draft', () => {
     expect(pricingNumberFromInput('-')).toBe(0);
     expect(pricingNumberFromInput('valor inválido')).toBe(0);
   });
+
+  it('permite apagar temporariamente uma quantidade sem travar o formulário', () => {
+    const updated = updatePricingFormFromInput(
+      DEFAULT_PRICING_FORM,
+      'referenceQuantity',
+      '',
+    );
+
+    expect(updated.referenceQuantity).toBe(1);
+  });
+
+  it('migra rascunhos antigos com os novos campos comerciais', () => {
+    const legacy = {
+      materials: 8,
+      laborHour: 24,
+      fixedHour: 12,
+      minutes: 30,
+      packaging: 1,
+      wastePercent: 5,
+      marginPercent: 40,
+      taxPercent: 6,
+      channelPercent: 5,
+    };
+
+    expect(parsePricingDraft(JSON.stringify(legacy))).toMatchObject({
+      referenceQuantity: 1,
+      minimumResaleQuantity: 10,
+      commercialUnit: 'unidade',
+      packaging: 1,
+    });
+  });
 });

@@ -18,6 +18,7 @@ do produto** e será restaurada sempre que o produto for selecionado novamente.
 | Seletor de materiais | Concluída |
 | Integração e retenção por produto | Concluída |
 | Testes e empacotamento desktop | Concluída na versão 0.4.0 |
+| Quantidades, revenda e aproveitamento A4 | Concluída na versão 0.7.0 |
 
 ## Layout proposto
 
@@ -162,7 +163,9 @@ exemplo:
 Ao selecionar **Kit Festa**, o sistema recupera as 12 folhas e os 20 ml. Ao
 selecionar **Caixa Presente**, recupera as 4 folhas e os 5 ml. Voltar ao Kit
 Festa restaura novamente sua composição salva, junto com mão de obra, tempo,
-embalagem, desperdício, margem, impostos e taxa do canal.
+desperdício, margem, impostos e taxa do canal. Custos antigos de embalagem são
+preservados como legado visível até a pessoa removê-los; novas embalagens são
+cadastradas como materiais.
 
 Alterações feitas no formulário só passam a compor a receita persistente depois
 de **Salvar produto**. Se houver mudanças ainda não salvas e a pessoa tentar
@@ -245,6 +248,23 @@ zerar nem alterar seus preços silenciosamente.
 - Validar backup antes e depois da atualização.
 - Publicar uma nova versão pelo atualizador já implantado.
 
+### Fase 7 — Quantidades, revenda e aproveitamento A4
+
+- Salvar quantidade analisada, unidade comercial e quantidade mínima de
+  revenda em cada precificação.
+- Multiplicar consumo de materiais, tempo, mão de obra e custo fixo pela
+  quantidade simulada.
+- Aplicar desperdício sobre materiais, mão de obra e custo fixo.
+- Comparar automaticamente 1, 10, 20, 50, 100 e uma quantidade personalizada.
+- Exibir custo total e unitário, preço mínimo e sugerido, venda e lucro total.
+- Calcular o aproveitamento de uma folha A4 de 21 × 29,7 cm, sem rotação,
+  arredondando a quantidade de folhas sempre para cima.
+- Impedir que o papel selecionado para A4 também seja cobrado como consumo
+  normal na mesma precificação.
+- Salvar e restaurar a configuração A4 junto da receita do produto.
+- Migrar precificações anteriores sem apagar materiais, preços ou custos de
+  embalagem já existentes.
+
 ## Critérios de aceite
 
 1. É possível cadastrar, editar, pesquisar e arquivar um material.
@@ -264,6 +284,10 @@ zerar nem alterar seus preços silenciosamente.
 13. Catálogo e composições sobrevivem a backup e restauração.
 14. Nenhum dado de material aparece nos logs técnicos.
 15. A atualização instalada preserva todos os dados existentes.
+16. As quantidades padrão e personalizada apresentam resultados coerentes.
+17. O aproveitamento A4 informa unidades por folha, folhas necessárias e custo.
+18. Quantidade, unidade comercial, revenda e A4 voltam preenchidos ao reabrir a
+    precificação.
 
 ## Fora do escopo desta entrega
 
