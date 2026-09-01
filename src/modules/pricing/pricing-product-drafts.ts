@@ -77,9 +77,9 @@ export function loadPricingProductDrafts() {
   );
 }
 
-export function persistPricingProductDrafts(drafts: PricingProductDraft[]) {
+export async function persistPricingProductDrafts(drafts: PricingProductDraft[]) {
   try {
-    writeStoredDocument(
+    await writeStoredDocument(
       PRICING_PRODUCTS_STORAGE_KEY,
       JSON.stringify(drafts),
     );
@@ -90,12 +90,12 @@ export function persistPricingProductDrafts(drafts: PricingProductDraft[]) {
   }
 }
 
-export function persistPricingCatalogAndProductDrafts(
+export async function persistPricingCatalogAndProductDrafts(
   materials: PricingMaterial[],
   drafts: PricingProductDraft[],
 ) {
   try {
-    writeStoredDocuments([
+    await writeStoredDocuments([
       {
         key: PRICING_MATERIALS_STORAGE_KEY,
         serializedValue: JSON.stringify(pricingMaterialsSchema.parse(materials)),

@@ -21,13 +21,14 @@ export function loadClientDrafts() {
   return parseStoredClientDrafts(readStoredDocument(CLIENT_DRAFTS_STORAGE_KEY));
 }
 
-export function persistClientDrafts(clients: ClientDraft[]) {
+export async function persistClientDrafts(clients: ClientDraft[]) {
   try {
-    writeStoredDocument(
+    await writeStoredDocument(
       CLIENT_DRAFTS_STORAGE_KEY,
       JSON.stringify(clientDraftsSchema.parse(clients)),
     );
+    return true;
   } catch {
-    // O modo de demonstração continua disponível mesmo sem armazenamento local.
+    return false;
   }
 }

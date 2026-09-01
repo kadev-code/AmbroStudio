@@ -188,7 +188,20 @@ export function ProductionBoard() {
 
   function saveOrders(nextOrders: typeof orders) {
     setOrders(nextOrders);
-    persistProductionDrafts(nextOrders);
+    void persistProductionDrafts(nextOrders).then((saved) => {
+      if (saved) return;
+      const incident = safeLogger.record({
+        severity: 'error',
+        eventCode: 'PRODUCTION_DATA_SAVE_FAILED',
+        module: 'production',
+        operation: 'save-production-data',
+        result: 'failure',
+        errorCode: 'LOCAL_DATABASE_WRITE_FAILED',
+      });
+      setFeedback(
+        `Não foi possível confirmar a gravação. Diagnóstico: ${incident.incidentCode}.`,
+      );
+    });
   }
 
   function submitOrder(event: FormEvent<HTMLFormElement>) {
@@ -262,7 +275,7 @@ export function ProductionBoard() {
     }));
   }
 
-  function archiveOrder(orderId: string) {
+  async function archiveOrder(orderId: string) {
     try {
       const order = orders.find((item) => item.id === orderId);
       const nextOrders = archiveProductionOrder(orders, orderId);
@@ -272,7 +285,7 @@ export function ProductionBoard() {
           order.clientId,
           order.negotiationId,
         );
-        if (!persistProductionCompletion(nextOrders, nextClients)) {
+        if (!(await persistProductionCompletion(nextOrders, nextClients))) {
           const incident = safeLogger.record({
             severity: 'error',
             eventCode: 'PRODUCTION_COMPLETION_SAVE_FAILED',
@@ -508,7 +521,7 @@ export function ProductionBoard() {
                           <button key={action.status} className={action.primary ? 'rounded-lg bg-[#5c3d2e] px-2.5 py-2 text-[11px] font-bold text-white' : 'rounded-lg border border-[#d7c8ba] px-2.5 py-2 text-[11px] font-bold text-[#70574a]'} onClick={() => moveOrder(order.id, action.status)} type="button">{action.label}</button>
                         ))}
                         {order.status === 'delivered' ? (
-                          <button className="rounded-lg border border-[#d7c8ba] px-2.5 py-2 text-[11px] font-bold text-[#70574a]" onClick={() => archiveOrder(order.id)} type="button">Arquivar</button>
+                          <button className="rounded-lg border border-[#d7c8ba] px-2.5 py-2 text-[11px] font-bold text-[#70574a]" onClick={() => void archiveOrder(order.id)} type="button">Arquivar</button>
                         ) : null}
                       </div>
                     </article>

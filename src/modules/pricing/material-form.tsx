@@ -18,7 +18,7 @@ import {
 type MaterialFormProps = {
   initialMaterial?: PricingMaterial;
   onCancel(): void;
-  onSave(input: MaterialInput): void;
+  onSave(input: MaterialInput): void | Promise<void>;
 };
 
 function materialValidationMessage(path: PropertyKey[], message: string) {
@@ -82,7 +82,7 @@ export function MaterialForm({
     return (price * 100) / quantity;
   }, [purchasePrice, purchasedQuantity]);
 
-  function submit(event: FormEvent<HTMLFormElement>) {
+  async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (submittingRef.current) return;
     const parsed = materialInputSchema.safeParse({
@@ -106,7 +106,7 @@ export function MaterialForm({
     submittingRef.current = true;
     setIsSubmitting(true);
     try {
-      onSave(parsed.data);
+      await onSave(parsed.data);
     } catch (error) {
       submittingRef.current = false;
       setIsSubmitting(false);

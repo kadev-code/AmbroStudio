@@ -26,8 +26,8 @@ export function loadPricingMaterials() {
   );
 }
 
-export function persistPricingMaterials(materials: PricingMaterial[]) {
-  writeStoredDocument(
+export async function persistPricingMaterials(materials: PricingMaterial[]) {
+  await writeStoredDocument(
     PRICING_MATERIALS_STORAGE_KEY,
     JSON.stringify(pricingMaterialsSchema.parse(materials)),
   );

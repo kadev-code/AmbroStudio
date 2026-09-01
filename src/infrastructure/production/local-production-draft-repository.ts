@@ -27,13 +27,14 @@ export function loadProductionDrafts() {
   );
 }
 
-export function persistProductionDrafts(orders: ProductionOrder[]) {
+export async function persistProductionDrafts(orders: ProductionOrder[]) {
   try {
-    writeStoredDocument(
+    await writeStoredDocument(
       PRODUCTION_DRAFTS_STORAGE_KEY,
       JSON.stringify(productionOrdersSchema.parse(orders)),
     );
+    return true;
   } catch {
-    // O quadro continua operando mesmo quando o storage local está indisponível.
+    return false;
   }
 }

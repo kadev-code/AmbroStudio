@@ -23,7 +23,7 @@ type MaterialSelectorDialogProps = {
   initialUsages: MaterialUsage[];
   onCancel(): void;
   onConfirm(usages: MaterialUsage[]): void;
-  onCreateMaterial(input: MaterialInput): PricingMaterial;
+  onCreateMaterial(input: MaterialInput): Promise<PricingMaterial>;
 };
 
 export function MaterialSelectorDialog({
@@ -115,8 +115,8 @@ export function MaterialSelectorDialog({
     onConfirm(parsed.data);
   }
 
-  function createMaterial(input: MaterialInput) {
-    const material = onCreateMaterial(input);
+  async function createMaterial(input: MaterialInput) {
+    const material = await onCreateMaterial(input);
     setQuantities((current) => ({ ...current, [material.id]: '1' }));
     setShowCreate(false);
     setFeedback('Material cadastrado e selecionado. Ajuste a quantidade usada.');

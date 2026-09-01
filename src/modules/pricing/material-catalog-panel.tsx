@@ -16,7 +16,7 @@ import { formatUnitCost, money } from './pricing-format';
 
 type MaterialCatalogPanelProps = {
   materials: PricingMaterial[];
-  onChange(materials: PricingMaterial[]): void;
+  onChange(materials: PricingMaterial[]): Promise<void>;
 };
 
 export function MaterialCatalogPanel({
@@ -27,6 +27,7 @@ export function MaterialCatalogPanel({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [feedback, setFeedback] = useState('');
+  const [pendingMaterialId, setPendingMaterialId] = useState('');
 
   const visibleMaterials = useMemo(
     () =>
@@ -39,33 +40,43 @@ export function MaterialCatalogPanel({
   );
   const editingMaterial = materials.find((item) => item.id === editingId);
 
-  function saveNew(input: MaterialInput) {
+  async function saveNew(input: MaterialInput) {
     const next = createPricingMaterial(materials, input);
-    onChange(next);
+    await onChange(next);
     setIsCreating(false);
     setFeedback('Material salvo e disponível nas simulações.');
   }
 
-  function saveEdit(input: MaterialInput) {
+  async function saveEdit(input: MaterialInput) {
     if (!editingId) return;
     const next = updatePricingMaterial(materials, editingId, input);
-    onChange(next);
+    await onChange(next);
     setEditingId(null);
     setFeedback('Material atualizado. Os produtos vinculados foram recalculados.');
   }
 
-  function toggleArchived(material: PricingMaterial) {
+  async function toggleArchived(material: PricingMaterial) {
+    if (pendingMaterialId) return;
+    setPendingMaterialId(material.id);
     const next = setPricingMaterialArchived(
       materials,
       material.id,
       !material.archived,
     );
-    onChange(next);
-    setFeedback(
-      material.archived
-        ? 'Material reativado.'
-        : 'Material arquivado. Ele continua preservado nos produtos existentes.',
-    );
+    try {
+      await onChange(next);
+      setFeedback(
+        material.archived
+          ? 'Material reativado.'
+          : 'Material arquivado. Ele continua preservado nos produtos existentes.',
+      );
+    } catch {
+      setFeedback(
+        'Não foi possível atualizar o material. O cadastro anterior foi preservado.',
+      );
+    } finally {
+      setPendingMaterialId('');
+    }
   }
 
   return (
@@ -193,10 +204,15 @@ export function MaterialCatalogPanel({
                     </button>
                     <button
                       className="rounded-lg border border-[#d8c7b7] px-3 py-2 text-xs font-bold text-[#6d4a39]"
-                      onClick={() => toggleArchived(material)}
+                      disabled={Boolean(pendingMaterialId)}
+                      onClick={() => void toggleArchived(material)}
                       type="button"
                     >
-                      {material.archived ? 'Reativar' : 'Arquivar'}
+                      {pendingMaterialId === material.id
+                        ? 'Salvando...'
+                        : material.archived
+                          ? 'Reativar'
+                          : 'Arquivar'}
                     </button>
                   </div>
                 </td>

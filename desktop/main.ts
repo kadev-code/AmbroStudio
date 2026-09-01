@@ -141,22 +141,22 @@ function registerIpc() {
       database.readDocument(key),
     );
   });
-  ipcMain.on('storage:write', (event, key: unknown, value: unknown) => {
-    event.returnValue = timedActionResult('write-local-document', () => {
+  ipcMain.handle('storage:write', (_event, key: unknown, value: unknown) => {
+    return timedActionResult('write-local-document', () => {
       database.writeDocument(key, value);
       return null;
     });
   });
-  ipcMain.on('storage:write-many', (event, documents: unknown) => {
-    event.returnValue = timedActionResult('write-local-documents', () => {
+  ipcMain.handle('storage:write-many', (_event, documents: unknown) => {
+    return timedActionResult('write-local-documents', () => {
       database.writeDocuments(documents);
       return null;
     });
   });
-  ipcMain.on(
+  ipcMain.handle(
     'clients:delete-data',
-    (event, documents: unknown, attachmentIds: unknown) => {
-      event.returnValue = timedActionResult('delete-client-data', () => {
+    (_event, documents: unknown, attachmentIds: unknown) => {
+      return timedActionResult('delete-client-data', () => {
         database.deleteClientData(documents, attachmentIds);
         return null;
       });
@@ -337,6 +337,20 @@ async function createWindow() {
       "Boolean(window.ambroDesktop?.isDesktop && document.querySelector('main'))",
     );
     if (!rendererReady) throw new Error('DESKTOP_RENDERER_NOT_READY');
+    const storageReady = await window.webContents.executeJavaScript(`
+      (async () => {
+        const storage = window.ambroDesktop?.storage;
+        if (!storage) return false;
+        await storage.write('ambro-studio:client-drafts:v1', '[]');
+        await storage.writeMany([
+          { key: 'ambro-studio:production-drafts:v1', serializedValue: '[]' },
+          { key: 'ambro-studio:pricing-materials:v1', serializedValue: '[]' },
+        ]);
+        return storage.read('ambro-studio:client-drafts:v1') === '[]' &&
+          storage.read('ambro-studio:production-drafts:v1') === '[]';
+      })()
+    `);
+    if (!storageReady) throw new Error('DESKTOP_STORAGE_NOT_READY');
     const smokeBackupPath = `${database.path}.ambrobackup`;
     await createBackupInBackground(database.path, smokeBackupPath);
     if (isExpectedSmokeDatabasePath(database.path)) {

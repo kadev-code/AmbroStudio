@@ -1,6 +1,6 @@
 'use client';
 
-import { useDeferredValue, useEffect, useMemo, useState } from 'react';
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import {
   calculatePrice,
   PricingCalculationError,
@@ -143,6 +143,8 @@ export function PricingSimulator() {
   const [productName, setProductName] = useState('');
   const [baseline, setBaseline] = useState(initialState.baseline);
   const [productFeedback, setProductFeedback] = useState('');
+  const [productSaving, setProductSaving] = useState(false);
+  const productSavingRef = useRef(false);
   const [selectorOpen, setSelectorOpen] = useState(false);
 
   const materialsCostCents = useMemo(() => {
@@ -275,7 +277,8 @@ export function PricingSimulator() {
     );
   }
 
-  function saveProduct() {
+  async function saveProduct() {
+    if (productSavingRef.current) return;
     const normalizedName = productName.trim();
     if (!normalizedName) {
       setProductFeedback('Informe o nome do produto antes de salvar.');
@@ -287,53 +290,60 @@ export function PricingSimulator() {
       return;
     }
 
-    const savedForm = { ...effectiveForm };
-    const nextDrafts = savePricingProductDraft(productDrafts, {
-      id: activeProductId || undefined,
-      name: normalizedName,
-      form: savedForm,
-      materialUsages,
-      legacyMaterialsCostCents,
-    });
-    const saved = nextDrafts[0];
-
-    if (!persistPricingProductDrafts(nextDrafts)) {
-      const incident = safeLogger.record({
-        severity: 'error',
-        eventCode: 'PRICING_PRODUCT_SAVE_FAILED',
-        module: 'pricing',
-        operation: 'save-pricing-product',
-        result: 'failure',
-        errorCode: 'LOCAL_STORAGE_WRITE_FAILED',
+    productSavingRef.current = true;
+    setProductSaving(true);
+    try {
+      const savedForm = { ...effectiveForm };
+      const nextDrafts = savePricingProductDraft(productDrafts, {
+        id: activeProductId || undefined,
+        name: normalizedName,
+        form: savedForm,
+        materialUsages,
+        legacyMaterialsCostCents,
       });
-      setProductFeedback(
-        `Não foi possível salvar o produto. Diagnóstico: ${incident.incidentCode}.`,
-      );
-      return;
-    }
+      const saved = nextDrafts[0];
 
-    setProductDrafts(nextDrafts);
-    setActiveProductId(saved.id);
-    setProductName(saved.name);
-    setForm(saved.form);
-    setFieldInputs(pricingFieldInputsFromForm(saved.form));
-    persistPricingDraft(saved.form);
-    setBaseline(
-      pricingSnapshot(
-        saved.name,
-        saved.form,
-        saved.materialUsages,
-        saved.legacyMaterialsCostCents,
-      ),
-    );
-    setProductFeedback(
-      activeProductId
-        ? 'Produto e materiais atualizados neste dispositivo.'
-        : 'Produto e materiais salvos neste dispositivo.',
-    );
+      if (!(await persistPricingProductDrafts(nextDrafts))) {
+        const incident = safeLogger.record({
+          severity: 'error',
+          eventCode: 'PRICING_PRODUCT_SAVE_FAILED',
+          module: 'pricing',
+          operation: 'save-pricing-product',
+          result: 'failure',
+          errorCode: 'LOCAL_STORAGE_WRITE_FAILED',
+        });
+        setProductFeedback(
+          `Não foi possível salvar o produto. Diagnóstico: ${incident.incidentCode}.`,
+        );
+        return;
+      }
+
+      setProductDrafts(nextDrafts);
+      setActiveProductId(saved.id);
+      setProductName(saved.name);
+      setForm(saved.form);
+      setFieldInputs(pricingFieldInputsFromForm(saved.form));
+      persistPricingDraft(saved.form);
+      setBaseline(
+        pricingSnapshot(
+          saved.name,
+          saved.form,
+          saved.materialUsages,
+          saved.legacyMaterialsCostCents,
+        ),
+      );
+      setProductFeedback(
+        activeProductId
+          ? 'Produto e materiais atualizados neste dispositivo.'
+          : 'Produto e materiais salvos neste dispositivo.',
+      );
+    } finally {
+      productSavingRef.current = false;
+      setProductSaving(false);
+    }
   }
 
-  function changeMaterialsCatalog(nextMaterials: PricingMaterial[]) {
+  async function changeMaterialsCatalog(nextMaterials: PricingMaterial[]) {
     try {
       const wasDirty = hasUnsavedChanges;
       const refreshedDrafts = refreshPricingProductMaterialCosts(
@@ -341,10 +351,10 @@ export function PricingSimulator() {
         nextMaterials,
       );
       if (
-        !persistPricingCatalogAndProductDrafts(
+        !(await persistPricingCatalogAndProductDrafts(
           nextMaterials,
           refreshedDrafts,
-        )
+        ))
       ) {
         throw new Error('PRICING_CATALOG_WRITE_FAILED');
       }
@@ -388,9 +398,9 @@ export function PricingSimulator() {
     }
   }
 
-  function createMaterialFromSelector(input: MaterialInput) {
+  async function createMaterialFromSelector(input: MaterialInput) {
     const next = createPricingMaterial(materials, input);
-    changeMaterialsCatalog(next);
+    await changeMaterialsCatalog(next);
     return next[0];
   }
 
@@ -495,8 +505,12 @@ export function PricingSimulator() {
 
                 <div className="flex gap-2">
                   <button className="rounded-xl border border-[#ccbbaa] bg-white px-3 py-3 text-sm font-bold text-[#6d5448] hover:bg-[#fffdfa]" onClick={startNewProduct} type="button">Novo</button>
-                  <button className="rounded-xl bg-[#5c3d2e] px-4 py-3 text-sm font-bold text-white shadow-sm hover:bg-[#4c3125]" onClick={saveProduct} type="button">
-                    {activeProductId ? 'Atualizar' : 'Salvar produto'}
+                  <button className="rounded-xl bg-[#5c3d2e] px-4 py-3 text-sm font-bold text-white shadow-sm hover:bg-[#4c3125] disabled:cursor-wait disabled:opacity-60" disabled={productSaving} onClick={() => void saveProduct()} type="button">
+                    {productSaving
+                      ? 'Salvando...'
+                      : activeProductId
+                        ? 'Atualizar'
+                        : 'Salvar produto'}
                   </button>
                 </div>
               </div>

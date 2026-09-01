@@ -30,6 +30,11 @@ em uma tabela própria do SQLite. A interface recebe apenas identificador,
 nome, tipo, tamanho e data. Para abrir um arquivo, o processo principal cria uma
 cópia temporária com nome técnico, sem revelar caminhos internos ao renderer.
 
+As gravações funcionais usam IPC assíncrono e passam por uma fila única no
+renderer. Isso mantém a ordem das alterações sem bloquear a digitação ou a
+navegação enquanto o SQLite confirma cada operação. Gravações que precisam
+alterar mais de um documento continuam sendo executadas em uma transação única.
+
 A versão web permanece apenas para desenvolvimento e usa `localStorage`. Ao
 rodar no Electron, dados encontrados no armazenamento do renderer são copiados
 para o SQLite quando ainda não existe documento correspondente.

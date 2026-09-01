@@ -10,12 +10,12 @@ import { CLIENT_DRAFTS_STORAGE_KEY } from '../clients/local-client-draft-reposit
 import { writeStoredDocuments } from '../persistence/document-storage';
 import { PRODUCTION_DRAFTS_STORAGE_KEY } from './local-production-draft-repository';
 
-export function persistProductionCompletion(
+export async function persistProductionCompletion(
   orders: ProductionOrder[],
   clients: ClientDraft[],
 ) {
   try {
-    writeStoredDocuments([
+    await writeStoredDocuments([
       {
         key: PRODUCTION_DRAFTS_STORAGE_KEY,
         serializedValue: JSON.stringify(productionOrdersSchema.parse(orders)),

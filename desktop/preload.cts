@@ -14,6 +14,12 @@ function unwrap<T>(result: SyncResult<T>) {
   return result.value;
 }
 
+async function invokeAndUnwrap<T>(channel: string, ...args: unknown[]) {
+  return unwrap<T>(
+    (await ipcRenderer.invoke(channel, ...args)) as SyncResult<T>,
+  );
+}
+
 const api: AmbroDesktopApi = {
   isDesktop: true,
   platform: process.platform,
@@ -21,19 +27,17 @@ const api: AmbroDesktopApi = {
     read(key) {
       return unwrap<string | null>(ipcRenderer.sendSync('storage:read', key));
     },
-    write(key, serializedValue) {
-      unwrap<null>(ipcRenderer.sendSync('storage:write', key, serializedValue));
+    async write(key, serializedValue) {
+      await invokeAndUnwrap<null>('storage:write', key, serializedValue);
     },
-    writeMany(documents) {
-      unwrap<null>(ipcRenderer.sendSync('storage:write-many', documents));
+    async writeMany(documents) {
+      await invokeAndUnwrap<null>('storage:write-many', documents);
     },
-    deleteClientData(documents, attachmentIds) {
-      unwrap<null>(
-        ipcRenderer.sendSync(
-          'clients:delete-data',
-          documents,
-          attachmentIds,
-        ),
+    async deleteClientData(documents, attachmentIds) {
+      await invokeAndUnwrap<null>(
+        'clients:delete-data',
+        documents,
+        attachmentIds,
       );
     },
   },

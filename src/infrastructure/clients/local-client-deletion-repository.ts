@@ -10,12 +10,12 @@ import { writeStoredDocumentsAndRemoveAttachments } from '../persistence/documen
 import { PRODUCTION_DRAFTS_STORAGE_KEY } from '../production/local-production-draft-repository';
 import { CLIENT_DRAFTS_STORAGE_KEY } from './local-client-draft-repository';
 
-export function persistClientDeletion(
+export async function persistClientDeletion(
   clients: ClientDraft[],
   productionOrders: ProductionOrder[],
   attachmentIds: string[],
 ) {
-  writeStoredDocumentsAndRemoveAttachments(
+  await writeStoredDocumentsAndRemoveAttachments(
     [
       {
         key: CLIENT_DRAFTS_STORAGE_KEY,

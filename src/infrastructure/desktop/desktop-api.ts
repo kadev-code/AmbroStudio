@@ -58,14 +58,14 @@ export type AmbroDesktopApi = {
   platform: NodeJS.Platform;
   storage: {
     read(key: string): string | null;
-    write(key: string, serializedValue: string): void;
+    write(key: string, serializedValue: string): Promise<void>;
     writeMany(
       documents: Array<{ key: string; serializedValue: string }>,
-    ): void;
+    ): Promise<void>;
     deleteClientData(
       documents: Array<{ key: string; serializedValue: string }>,
       attachmentIds: string[],
-    ): void;
+    ): Promise<void>;
   };
   backup: {
     create(): Promise<DesktopActionResult>;

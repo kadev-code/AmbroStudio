@@ -128,10 +128,23 @@ export function ClientsPanel() {
 
   function saveClients(nextClients: typeof clients) {
     setClients(nextClients);
-    persistClientDrafts(nextClients);
+    void persistClientDrafts(nextClients).then((saved) => {
+      if (saved) return;
+      const incident = safeLogger.record({
+        severity: 'error',
+        eventCode: 'CLIENT_DATA_SAVE_FAILED',
+        module: 'clients',
+        operation: 'save-client-data',
+        result: 'failure',
+        errorCode: 'LOCAL_DATABASE_WRITE_FAILED',
+      });
+      setClientFeedback(
+        `Não foi possível confirmar a gravação. Diagnóstico: ${incident.incidentCode}.`,
+      );
+    });
   }
 
-  function deleteClients(clientIds: string[]) {
+  async function deleteClients(clientIds: string[]) {
     const ids = new Set(clientIds);
     const clientsToDelete = clients.filter((client) => ids.has(client.id));
     if (!clientsToDelete.length) return;
@@ -155,7 +168,7 @@ export function ClientsPanel() {
         productionOrders,
         ids,
       );
-      persistClientDeletion(
+      await persistClientDeletion(
         nextClients,
         nextProductionOrders,
         clientAttachmentIds(clients, ids),

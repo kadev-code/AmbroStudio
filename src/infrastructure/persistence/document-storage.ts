@@ -1,5 +1,13 @@
 const MAX_DOCUMENT_BYTES = 10 * 1024 * 1024;
 
+let desktopWriteQueue = Promise.resolve();
+
+function enqueueDesktopWrite(action: () => Promise<void>) {
+  const pendingWrite = desktopWriteQueue.then(action, action);
+  desktopWriteQueue = pendingWrite.catch(() => undefined);
+  return pendingWrite;
+}
+
 export function readStoredDocument(key: string) {
   if (typeof window === 'undefined') return null;
 
@@ -11,7 +19,7 @@ export function readStoredDocument(key: string) {
 
     const browserValue = window.localStorage.getItem(key);
     if (browserValue && window.ambroDesktop) {
-      window.ambroDesktop.storage.write(key, browserValue);
+      void writeStoredDocument(key, browserValue).catch(() => undefined);
     }
     return browserValue;
   } catch {
@@ -19,21 +27,23 @@ export function readStoredDocument(key: string) {
   }
 }
 
-export function writeStoredDocument(key: string, serializedValue: string) {
+export async function writeStoredDocument(key: string, serializedValue: string) {
   if (typeof window === 'undefined') return;
   if (new TextEncoder().encode(serializedValue).byteLength > MAX_DOCUMENT_BYTES) {
     throw new Error('DOCUMENT_TOO_LARGE');
   }
 
   if (window.ambroDesktop) {
-    window.ambroDesktop.storage.write(key, serializedValue);
+    await enqueueDesktopWrite(() =>
+      window.ambroDesktop!.storage.write(key, serializedValue),
+    );
     return;
   }
 
   window.localStorage.setItem(key, serializedValue);
 }
 
-export function writeStoredDocuments(
+export async function writeStoredDocuments(
   documents: Array<{ key: string; serializedValue: string }>,
 ) {
   if (typeof window === 'undefined') return;
@@ -50,7 +60,9 @@ export function writeStoredDocuments(
   }
 
   if (window.ambroDesktop) {
-    window.ambroDesktop.storage.writeMany(documents);
+    await enqueueDesktopWrite(() =>
+      window.ambroDesktop!.storage.writeMany(documents),
+    );
     return;
   }
 
@@ -74,15 +86,17 @@ export function writeStoredDocuments(
   }
 }
 
-export function writeStoredDocumentsAndRemoveAttachments(
+export async function writeStoredDocumentsAndRemoveAttachments(
   documents: Array<{ key: string; serializedValue: string }>,
   attachmentIds: string[],
 ) {
   if (typeof window === 'undefined') return;
   if (window.ambroDesktop) {
-    window.ambroDesktop.storage.deleteClientData(documents, attachmentIds);
+    await enqueueDesktopWrite(() =>
+      window.ambroDesktop!.storage.deleteClientData(documents, attachmentIds),
+    );
     return;
   }
 
-  writeStoredDocuments(documents);
+  await writeStoredDocuments(documents);
 }
